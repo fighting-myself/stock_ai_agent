@@ -6,6 +6,24 @@ import streamlit as st
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8001")
 
+
+def safe_get_json(url: str, params=None, timeout: int = 60):
+    try:
+        resp = httpx.get(url, params=params, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json(), None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def safe_post_json(url: str, params=None, payload=None, timeout: int = 60):
+    try:
+        resp = httpx.post(url, params=params, json=payload, timeout=timeout)
+        resp.raise_for_status()
+        return resp.json(), None
+    except Exception as exc:
+        return None, str(exc)
+
 st.set_page_config(page_title="股票AI助手", layout="wide")
 st.title("📈 股票AI智能助手（LangGraph多智能体）")
 
@@ -62,12 +80,14 @@ with tab0:
     code = st.text_input("股票代码", "600519", key="overview_code")
     days = st.slider("总览回看区间", min_value=60, max_value=300, value=120, key="overview_days")
     if st.button("生成量化总览", key="overview_btn"):
-        resp = httpx.get(
+        data, err = safe_get_json(
             f"{BACKEND_URL}/api/workbench/overview",
             params={"code": code, "days": days},
             timeout=120,
         )
-        data = resp.json()
+        if err:
+            st.error(f"总览请求失败: {err}")
+            st.stop()
         c1, c2, c3 = st.columns(3)
         c1.metric("综合评分", data["score"])
         c2.metric("风险等级", data["risk_level"])
@@ -252,12 +272,14 @@ with tab9:
 with tab10:
     code = st.text_input("股票代码", "600519", key="valuation_code")
     if st.button("查询估值面板", key="valuation_btn"):
-        resp = httpx.get(
+        data, err = safe_get_json(
             f"{BACKEND_URL}/api/fundamental/valuation",
             params={"code": code},
             timeout=60,
         )
-        data = resp.json()
+        if err:
+            st.error(f"估值接口请求失败: {err}")
+            st.stop()
         c1, c2, c3 = st.columns(3)
         c1.metric("PE", data.get("pe"))
         c2.metric("PB", data.get("pb"))
@@ -265,4 +287,6 @@ with tab10:
         c4, c5 = st.columns(2)
         c4.metric("总市值(万元)", data.get("total_mv"))
         c5.metric("流通市值(万元)", data.get("circ_mv"))
+        if not data.get("available", True):
+            st.warning(f"估值数据暂不可用：{data.get('reason', '未知原因')}")
         st.json(data)
