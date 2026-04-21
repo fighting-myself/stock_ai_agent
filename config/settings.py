@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # 服务
     BACKEND_HOST: str = os.getenv("BACKEND_HOST", "0.0.0.0")
-    BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", 8000))
+    BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", 8001))
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 
 settings = Settings()

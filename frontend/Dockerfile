@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 COPY frontend/app.py /app/frontend/app.py
 
-ENV BACKEND_URL=http://backend:8000
+ENV BACKEND_URL=http://backend:8001
 
 EXPOSE 6006
 

@@ -32,7 +32,7 @@ stock_ai_agent/
 ### 1) 启动后端
 
 ```bash
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn backend.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
 ### 2) 启动前端
@@ -41,10 +41,10 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 streamlit run frontend/app.py --server.port 6006 --server.address 0.0.0.0
 ```
 
-默认前端请求 `http://localhost:8000`，也可以通过环境变量覆盖：
+默认前端请求 `http://localhost:8001`，也可以通过环境变量覆盖：
 
 ```bash
-set BACKEND_URL=http://localhost:8000
+set BACKEND_URL=http://localhost:8001
 ```
 
 ## Docker 部署
@@ -71,7 +71,7 @@ docker build -t stock-ai-frontend:v1 -f frontend/Dockerfile .
 docker run -d --name stock-frontend --network stock-ai-net -p 6006:6006 -e BACKEND_URL=http://stock-backend:8001 stock-ai-frontend:v1
 ```
 
-说明：前端容器通过容器名 `backend` 访问后端，依赖同一 Docker 网络下的内置 DNS 解析。
+说明：前端容器通过容器名 `stock-backend` 访问后端，依赖同一 Docker 网络下的内置 DNS 解析。
 
 ### 方式二：docker compose（推荐）
 
@@ -81,5 +81,5 @@ docker compose up --build
 
 启动后：
 
-- 后端健康检查：`http://localhost:8000/health`
+- 后端健康检查：`http://localhost:8001/health`
 - 前端页面：`http://localhost:6006`
