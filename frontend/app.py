@@ -62,7 +62,8 @@ with st.sidebar:
         ["qwen3-vl-plus", "doubao", "deepseek-chat", "minimax-chat", "gpt-3.5-turbo"],
     )
     if st.button("健康检查", use_container_width=True):
-        health, err = safe_get_json(f"{backend_url}/health", timeout=10)
+        with st.spinner("正在检查服务状态..."):
+            health, err = safe_get_json(f"{backend_url}/health", timeout=10)
         if err:
             st.error(err)
         else:
@@ -76,11 +77,12 @@ with main_tab:
     st.subheader("AI 智能体问答")
     query = st.text_area("输入问题", "分析股票600519，获取当前价格并计算5日均线", height=110)
     if st.button("执行智能分析", type="primary"):
-        data, err = safe_post_json(
-            f"{backend_url}/api/agent/analyze",
-            params={"query": query, "agent_type": agent_type, "model_name": model_name},
-            timeout=120,
-        )
+        with st.spinner("AI 正在思考中，请稍候..."):
+            data, err = safe_post_json(
+                f"{backend_url}/api/agent/analyze",
+                params={"query": query, "agent_type": agent_type, "model_name": model_name},
+                timeout=120,
+            )
         if err:
             st.error(err)
         elif data.get("success"):
@@ -96,7 +98,8 @@ with main_tab:
     code = c1.text_input("股票代码", "600519", key="overview_code")
     days = c2.slider("回看天数", 60, 300, 120, key="overview_days")
     if st.button("生成总览", key="overview_btn"):
-        data, err = safe_get_json(f"{backend_url}/api/workbench/overview", params={"code": code, "days": days}, timeout=120)
+        with st.spinner("正在生成量化总览..."):
+            data, err = safe_get_json(f"{backend_url}/api/workbench/overview", params={"code": code, "days": days}, timeout=120)
         if err:
             st.error(err)
         else:
@@ -128,7 +131,8 @@ with market_tab:
     with t1:
         code = st.text_input("股票代码", "600519", key="quote_code")
         if st.button("查询快照", key="quote_btn"):
-            data, err = safe_get_json(f"{backend_url}/api/market/quote", params={"code": code})
+            with st.spinner("正在查询行情快照..."):
+                data, err = safe_get_json(f"{backend_url}/api/market/quote", params={"code": code})
             if err:
                 st.error(err)
             else:
@@ -144,7 +148,8 @@ with market_tab:
         code = st.text_input("股票代码", "600519", key="history_code")
         days = st.slider("历史天数", 20, 240, 60, key="history_days")
         if st.button("查询走势", key="history_btn"):
-            payload, err = safe_get_json(f"{backend_url}/api/market/history", params={"code": code, "days": days})
+            with st.spinner("正在加载历史走势..."):
+                payload, err = safe_get_json(f"{backend_url}/api/market/history", params={"code": code, "days": days})
             if err:
                 st.error(err)
             else:
@@ -154,7 +159,8 @@ with market_tab:
         code = st.text_input("股票代码", "600519", key="tech_code")
         days = st.slider("区间", 60, 300, 120, key="tech_days")
         if st.button("计算技术指标", key="tech_btn"):
-            data, err = safe_get_json(f"{backend_url}/api/indicator/technical", params={"code": code, "days": days})
+            with st.spinner("正在计算技术指标..."):
+                data, err = safe_get_json(f"{backend_url}/api/indicator/technical", params={"code": code, "days": days})
             if err:
                 st.error(err)
             else:
@@ -173,7 +179,8 @@ with risk_tab:
         code = st.text_input("股票代码", "600519", key="risk_code")
         days = st.slider("风险区间", 60, 300, 120, key="risk_days")
         if st.button("生成风险摘要", key="risk_btn"):
-            data, err = safe_get_json(f"{backend_url}/api/risk/summary", params={"code": code, "days": days})
+            with st.spinner("正在评估风险..."):
+                data, err = safe_get_json(f"{backend_url}/api/risk/summary", params={"code": code, "days": days})
             if err:
                 st.error(err)
             else:
@@ -183,7 +190,8 @@ with risk_tab:
         days = st.slider("回看区间", 60, 300, 120, key="var_days")
         confidence = st.slider("置信度", 0.90, 0.99, 0.95, 0.01, key="var_conf")
         if st.button("计算 VaR/CVaR", key="var_btn"):
-            data, err = safe_get_json(f"{backend_url}/api/risk/var", params={"code": code, "days": days, "confidence": confidence})
+            with st.spinner("正在计算 VaR/CVaR..."):
+                data, err = safe_get_json(f"{backend_url}/api/risk/var", params={"code": code, "days": days, "confidence": confidence})
             if err:
                 st.error(err)
             else:
@@ -196,7 +204,8 @@ with risk_tab:
             for line in raw.strip().splitlines():
                 code, weight = line.split(",")
                 positions.append({"code": code.strip(), "weight": float(weight.strip())})
-            data, err = safe_post_json(f"{backend_url}/api/portfolio/analyze", params={"days": days}, payload=positions, timeout=120)
+            with st.spinner("正在分析组合风险..."):
+                data, err = safe_post_json(f"{backend_url}/api/portfolio/analyze", params={"days": days}, payload=positions, timeout=120)
             if err:
                 st.error(err)
             else:
@@ -214,7 +223,8 @@ with strategy_tab:
         days = c2.slider("分析天数", 60, 300, 120, key="wf_days")
         style = c3.selectbox("风格", ["conservative", "balanced", "aggressive"], index=1, key="wf_style")
         if st.button("生成投研策略方案", key="wf_btn", type="primary"):
-            data, err = safe_post_json(f"{backend_url}/api/workflow/investment-plan", payload={"code": code, "days": days, "style": style}, timeout=180)
+            with st.spinner("正在生成投研策略方案..."):
+                data, err = safe_post_json(f"{backend_url}/api/workflow/investment-plan", payload={"code": code, "days": days, "style": style}, timeout=180)
             if err:
                 st.error(err)
             else:
@@ -233,7 +243,8 @@ with strategy_tab:
     elif feature == "Polymarket预测市场":
         keyword = st.text_input("关键词", "stock", key="pm_keyword")
         if st.button("查询预测市场", key="pm_btn"):
-            data, err = safe_get_json(f"{backend_url}/api/alt/polymarket", params={"keyword": keyword, "limit": 10}, timeout=60)
+            with st.spinner("正在查询预测市场..."):
+                data, err = safe_get_json(f"{backend_url}/api/alt/polymarket", params={"keyword": keyword, "limit": 10}, timeout=60)
             if err:
                 st.error(err)
             else:
@@ -241,7 +252,8 @@ with strategy_tab:
     elif feature == "大盘波动预警":
         code = st.text_input("指数代码", "000001", key="alert_code")
         if st.button("生成波动预警", key="alert_btn"):
-            data, err = safe_get_json(f"{backend_url}/api/alert/market-volatility", params={"code": code, "days": 60}, timeout=60)
+            with st.spinner("正在分析大盘波动..."):
+                data, err = safe_get_json(f"{backend_url}/api/alert/market-volatility", params={"code": code, "days": 60}, timeout=60)
             if err:
                 st.error(err)
             else:
@@ -250,7 +262,8 @@ with strategy_tab:
         topic = st.text_input("研报主题", "白酒行业景气度", key="report_topic")
         code = st.text_input("标的代码", "600519", key="report_code")
         if st.button("生成深度研报", key="report_btn"):
-            data, err = safe_post_json(f"{backend_url}/api/research/deep-report", payload={"topic": topic, "code": code}, timeout=180)
+            with st.spinner("正在撰写深度研报..."):
+                data, err = safe_post_json(f"{backend_url}/api/research/deep-report", payload={"topic": topic, "code": code}, timeout=180)
             if err:
                 st.error(err)
             else:
@@ -259,7 +272,8 @@ with strategy_tab:
         topic = st.text_input("辩论主题", "当前估值是否透支未来增长", key="debate_topic")
         code = st.text_input("标的代码", "600519", key="debate_code")
         if st.button("发起专家辩论", key="debate_btn"):
-            data, err = safe_post_json(f"{backend_url}/api/research/expert-debate", payload={"topic": topic, "code": code}, timeout=220)
+            with st.spinner("专家正在辩论中..."):
+                data, err = safe_post_json(f"{backend_url}/api/research/expert-debate", payload={"topic": topic, "code": code}, timeout=220)
             if err:
                 st.error(err)
             else:
@@ -267,7 +281,8 @@ with strategy_tab:
     elif feature == "板块/标的轮动对比":
         codes = st.text_input("代码列表（逗号分隔）", "600519,000858,601318,000001", key="rot_codes")
         if st.button("生成轮动排名", key="rot_btn"):
-            data, err = safe_get_json(f"{backend_url}/api/analysis/rotation", params={"codes": codes, "days": 60}, timeout=90)
+            with st.spinner("正在计算轮动排名..."):
+                data, err = safe_get_json(f"{backend_url}/api/analysis/rotation", params={"codes": codes, "days": 60}, timeout=90)
             if err:
                 st.error(err)
             else:
