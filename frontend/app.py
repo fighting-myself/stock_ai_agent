@@ -52,7 +52,7 @@ st.caption("多数据源 · 多因子分析 · 策略工作流 · 风控执行")
 
 with st.sidebar:
     st.subheader("系统配置")
-    backend_url = st.text_input("后端地址", BACKEND_URL, key="cfg_backend_url")
+    backend_url = BACKEND_URL
     agent_type = st.selectbox("Agent范式", ["react", "plan_execute", "reflection", "rewoo"])
     model_name = st.selectbox(
         "模型",
