@@ -1,1 +1,1 @@
-from frontend.enterprise_app import *  # noqa: F401,F403
+from enterprise_app import *  # noqa: F401,F403
