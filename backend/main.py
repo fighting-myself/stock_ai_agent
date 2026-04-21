@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from uvicorn import run
 from pydantic import BaseModel
 from typing import List
+import httpx
 
 from config.settings import settings
 from core.workflow import StockAgentWorkflow
@@ -24,6 +25,28 @@ class Position(BaseModel):
     weight: float
 
 
+class ResearchRequest(BaseModel):
+    topic: str
+    code: str = "600519"
+
+
+class ScenarioRequest(BaseModel):
+    code: str
+    event: str
+    horizon_days: int = 20
+
+
+class RebalanceRequest(BaseModel):
+    positions: List[Position]
+    days: int = 120
+
+
+class InvestmentPlanRequest(BaseModel):
+    code: str
+    days: int = 120
+    style: str = "balanced"  # conservative / balanced / aggressive
+
+
 def _clamp_score(score: float) -> int:
     return max(0, min(100, int(round(score))))
 
@@ -44,6 +67,20 @@ def _action_by_score(score: int, trend_signal: str, rsi14: float, pe: float):
     if pe and pe > 60:
         return "谨慎", "估值偏高，建议等待更好性价比"
     return "中性", "指标分化，建议轻仓跟踪"
+
+
+def _calc_return_pct(closes: List[float]) -> float:
+    if len(closes) < 2 or closes[0] == 0:
+        return 0.0
+    return round((closes[-1] - closes[0]) / closes[0] * 100, 2)
+
+
+def _style_base_exposure(style: str) -> float:
+    if style == "conservative":
+        return 0.35
+    if style == "aggressive":
+        return 0.75
+    return 0.55
 
 
 @app.post("/api/agent/analyze", response_model=ApiResponse)
@@ -230,6 +267,258 @@ async def workbench_overview(code: str, days: int = 120):
         "risk": {**risk, **tail_risk},
         "levels": levels,
         "valuation": valuation,
+    }
+
+
+@app.get("/api/alt/polymarket")
+async def polymarket_markets(keyword: str = "stock", limit: int = 10):
+    """免费 Polymarket 市场检索"""
+    url = "https://gamma-api.polymarket.com/markets"
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(url, params={"limit": 200, "active": True, "closed": False})
+            resp.raise_for_status()
+            markets = resp.json()
+        key = keyword.lower().strip()
+        filtered = []
+        for m in markets:
+            q = str(m.get("question", ""))
+            desc = str(m.get("description", ""))
+            if key in q.lower() or key in desc.lower():
+                filtered.append(
+                    {
+                        "question": q,
+                        "category": m.get("category"),
+                        "endDate": m.get("endDate"),
+                        "volume": m.get("volume"),
+                        "liquidity": m.get("liquidity"),
+                        "url": f"https://polymarket.com/event/{m.get('slug')}" if m.get("slug") else None,
+                    }
+                )
+            if len(filtered) >= limit:
+                break
+        return {"keyword": keyword, "count": len(filtered), "markets": filtered}
+    except Exception as exc:
+        return {"keyword": keyword, "count": 0, "markets": [], "error": str(exc)}
+
+
+@app.get("/api/alert/market-volatility")
+async def market_volatility_alert(code: str = "000001", days: int = 60):
+    df = ts_client.get_recent_daily(code=code, days=days)
+    closes = [float(v) for v in df["close"].tolist()]
+    rets = []
+    for i in range(1, len(closes)):
+        prev = closes[i - 1]
+        rets.append(0.0 if prev == 0 else (closes[i] - prev) / prev * 100)
+    current = rets[-1] if rets else 0.0
+    vol = calculator.risk_metrics(closes)["volatility_annual"]
+    level = "green"
+    msg = "波动正常"
+    if abs(current) >= 2.5 or vol >= 40:
+        level = "red"
+        msg = "高波动预警"
+    elif abs(current) >= 1.5 or vol >= 28:
+        level = "yellow"
+        msg = "中等波动预警"
+    return {"code": code, "current_daily_change_pct": round(current, 2), "annual_volatility_pct": vol, "level": level, "message": msg}
+
+
+@app.post("/api/research/deep-report")
+async def deep_research_report(req: ResearchRequest):
+    workflow = StockAgentWorkflow(agent_type=settings.DEFAULT_AGENT_TYPE, model_name=settings.DEFAULT_MODEL)
+    prompt = (
+        f"请围绕 {req.topic} 生成一份深度研报，标的代码 {req.code}。"
+        "结构包含：投资逻辑、产业与竞争、财务与估值、风险点、3个情景推演、结论建议。"
+        "输出尽量结构化，使用小标题与要点。"
+    )
+    content = await workflow.run(prompt)
+    return {"topic": req.topic, "code": req.code, "report": content}
+
+
+@app.post("/api/research/expert-debate")
+async def expert_debate(req: ResearchRequest):
+    workflow = StockAgentWorkflow(agent_type=settings.DEFAULT_AGENT_TYPE, model_name=settings.DEFAULT_MODEL)
+    bull = await workflow.run(f"你是多头分析师。围绕 {req.topic} 和 {req.code}，给出3个最强看多论点。")
+    bear = await workflow.run(f"你是空头分析师。围绕 {req.topic} 和 {req.code}，给出3个最强看空论点。")
+    judge = await workflow.run(
+        f"基于以下多空观点给出裁决和仓位建议（0-100）：\n看多:{bull}\n看空:{bear}\n请输出: 结论、建议仓位、触发止损条件。"
+    )
+    return {"topic": req.topic, "code": req.code, "bull": bull, "bear": bear, "judge": judge}
+
+
+@app.get("/api/analysis/technical-score")
+async def technical_score(code: str, days: int = 120):
+    df = ts_client.get_recent_daily(code=code, days=days)
+    closes = [float(v) for v in df["close"].tolist()]
+    highs = [float(v) for v in df["high"].tolist()]
+    lows = [float(v) for v in df["low"].tolist()]
+    rsi = calculator.rsi(closes, 14)
+    macd = calculator.macd(closes)["macd"]
+    kdj = calculator.kdj(highs, lows, closes, 9)
+    ma20 = calculator.moving_average(closes, 20)[-1] or closes[-1]
+    score = 50
+    score += 10 if 45 <= rsi <= 70 else -8
+    score += 12 if macd > 0 else -10
+    score += 8 if closes[-1] >= ma20 else -8
+    score += 8 if kdj["j"] < 90 else -6
+    score = _clamp_score(score)
+    signal = "偏多" if score >= 65 else ("中性" if score >= 45 else "偏空")
+    return {"code": code, "score": score, "signal": signal, "rsi14": rsi, "macd": macd, "kdj_j": kdj["j"], "price_vs_ma20": round(closes[-1] - ma20, 2)}
+
+
+@app.post("/api/analysis/scenario-impact")
+async def scenario_impact(req: ScenarioRequest):
+    workflow = StockAgentWorkflow(agent_type=settings.DEFAULT_AGENT_TYPE, model_name=settings.DEFAULT_MODEL)
+    prompt = (
+        f"事件冲击分析：标的 {req.code}，事件 {req.event}，观察期 {req.horizon_days} 天。"
+        "请输出：短期影响、中期影响、利好利空概率、关键观测指标、交易建议。"
+    )
+    content = await workflow.run(prompt)
+    return {"code": req.code, "event": req.event, "horizon_days": req.horizon_days, "analysis": content}
+
+
+@app.post("/api/portfolio/rebalance")
+async def portfolio_rebalance(req: RebalanceRequest):
+    if not req.positions:
+        return {"error": "positions 不能为空"}
+    vols = []
+    for p in req.positions:
+        df = ts_client.get_recent_daily(code=p.code, days=req.days)
+        closes = [float(v) for v in df["close"].tolist()]
+        vol = calculator.risk_metrics(closes)["volatility_annual"]
+        vols.append({"code": p.code, "vol": max(vol, 0.1)})
+    inv_sum = sum(1 / x["vol"] for x in vols)
+    rec = []
+    for x in vols:
+        w = (1 / x["vol"]) / inv_sum
+        rec.append({"code": x["code"], "suggested_weight": round(w, 4), "volatility_annual": x["vol"]})
+    return {"days": req.days, "method": "inverse-volatility", "suggestions": rec}
+
+
+@app.get("/api/analysis/sentiment-proxy")
+async def sentiment_proxy(code: str, days: int = 60):
+    df = ts_client.get_recent_daily(code=code, days=days)
+    closes = [float(v) for v in df["close"].tolist()]
+    vols = [float(v) for v in df["vol"].tolist()]
+    ret20 = _calc_return_pct(closes[-20:] if len(closes) >= 20 else closes)
+    vol_ratio = (sum(vols[-5:]) / 5) / ((sum(vols[-20:]) / 20) if len(vols) >= 20 else max(sum(vols) / len(vols), 1e-6))
+    score = _clamp_score(50 + ret20 * 1.2 + (vol_ratio - 1) * 20)
+    label = "乐观" if score >= 65 else ("中性" if score >= 40 else "谨慎")
+    return {"code": code, "sentiment_score": score, "sentiment": label, "ret20_pct": ret20, "volume_ratio_5_20": round(vol_ratio, 2)}
+
+
+@app.get("/api/analysis/ma-backtest")
+async def ma_backtest(code: str, short_window: int = 5, long_window: int = 20, days: int = 180):
+    if short_window >= long_window:
+        return {"error": "short_window 必须小于 long_window"}
+    df = ts_client.get_recent_daily(code=code, days=days)
+    closes = [float(v) for v in df["close"].tolist()]
+    short_ma = calculator.moving_average(closes, short_window)
+    long_ma = calculator.moving_average(closes, long_window)
+    position = 0
+    strategy_ret = 0.0
+    benchmark_ret = 0.0
+    trades = 0
+    for i in range(1, len(closes)):
+        if short_ma[i] is not None and long_ma[i] is not None:
+            prev_pos = position
+            position = 1 if short_ma[i] > long_ma[i] else 0
+            if position != prev_pos:
+                trades += 1
+        daily_ret = 0.0 if closes[i - 1] == 0 else (closes[i] - closes[i - 1]) / closes[i - 1]
+        strategy_ret += daily_ret * position
+        benchmark_ret += daily_ret
+    return {
+        "code": code,
+        "short_window": short_window,
+        "long_window": long_window,
+        "days": days,
+        "strategy_return_pct": round(strategy_ret * 100, 2),
+        "benchmark_return_pct": round(benchmark_ret * 100, 2),
+        "excess_return_pct": round((strategy_ret - benchmark_ret) * 100, 2),
+        "trades": trades,
+    }
+
+
+@app.get("/api/analysis/rotation")
+async def rotation_compare(codes: str, days: int = 60):
+    code_list = [x.strip() for x in codes.split(",") if x.strip()]
+    rows = []
+    for code in code_list:
+        df = ts_client.get_recent_daily(code=code, days=days)
+        closes = [float(v) for v in df["close"].tolist()]
+        ret = _calc_return_pct(closes)
+        risk = calculator.risk_metrics(closes)
+        rows.append({"code": code, "return_pct": ret, "volatility_annual": risk["volatility_annual"]})
+    rows = sorted(rows, key=lambda x: x["return_pct"], reverse=True)
+    return {"days": days, "ranking": rows}
+
+
+@app.post("/api/workflow/investment-plan")
+async def investment_plan(req: InvestmentPlanRequest):
+    overview = await workbench_overview(code=req.code, days=req.days)
+    tech = await technical_score(code=req.code, days=req.days)
+    alert = await market_volatility_alert(code="000001", days=min(req.days, 120))
+
+    base = _style_base_exposure(req.style)
+    score_adj = (overview["score"] - 50) / 100
+    risk_penalty = min(0.25, max(0.0, overview["risk"]["volatility_annual"] / 100))
+    alert_penalty = 0.15 if alert["level"] == "red" else (0.08 if alert["level"] == "yellow" else 0.0)
+    target_exposure = max(0.1, min(0.95, base + score_adj - risk_penalty - alert_penalty))
+
+    action = "持有观察"
+    if tech["signal"] == "偏多" and overview["action"] in ["偏多", "中性"]:
+        action = "分批买入"
+    elif tech["signal"] == "偏空" or overview["action"] == "偏空":
+        action = "减仓防守"
+
+    stop_loss_pct = 6 if req.style == "aggressive" else (5 if req.style == "balanced" else 4)
+    take_profit_pct = 15 if req.style == "aggressive" else (12 if req.style == "balanced" else 10)
+
+    plan = {
+        "market_state": {
+            "overview_score": overview["score"],
+            "risk_level": overview["risk_level"],
+            "alert_level": alert["level"],
+            "alert_message": alert["message"],
+        },
+        "positioning": {
+            "style": req.style,
+            "target_exposure": round(target_exposure, 2),
+            "cash_ratio": round(1 - target_exposure, 2),
+        },
+        "execution": {
+            "action": action,
+            "entry_rule": "分3笔执行，每次约目标仓位的 1/3",
+            "stop_loss_pct": stop_loss_pct,
+            "take_profit_pct": take_profit_pct,
+            "review_cycle_days": 5,
+        },
+        "checks": [
+            "若波动预警为 red，暂停加仓",
+            "若价格跌破支撑位且连续2天未收回，执行减仓",
+            "若技术评分连续2次低于45，降至防守仓位",
+        ],
+    }
+
+    workflow = StockAgentWorkflow(agent_type=settings.DEFAULT_AGENT_TYPE, model_name=settings.DEFAULT_MODEL)
+    summary_prompt = (
+        f"根据以下结构化投资计划，生成简洁的执行摘要（300字内）：{plan}。"
+        "要求包含：当前判断、仓位建议、风控要点。"
+    )
+    summary = await workflow.run(summary_prompt)
+
+    return {
+        "code": req.code,
+        "days": req.days,
+        "style": req.style,
+        "plan": plan,
+        "summary": summary,
+        "inputs": {
+            "overview": overview,
+            "technical_score": tech,
+            "volatility_alert": alert,
+        },
     }
 
 

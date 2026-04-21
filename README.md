@@ -1,16 +1,14 @@
-# stock_ai_agent（前后端分离版）
+# stock_ai_agent（前后端分离 + 多数据源 + 投研工作流）
 
-项目已拆分为前后端独立入口：
+一个面向金融投资分析的 AI 助手项目，支持：
 
-- 后端（FastAPI）：`backend/main.py`
-- 前端（Streamlit）：`frontend/app.py`
+- FastAPI 后端 + Streamlit 前端
+- Tushare 与 Eastmoney 免费接口自动切换
+- 技术指标、风险评估、组合分析、轮动比较
+- 深度研报、专家辩论、事件冲击分析
+- 一键投研策略工作流（仓位、风控、执行计划）
 
-为兼容原有命令，根目录保留了薄包装入口：
-
-- `main.py` -> 转发到 `backend.main:app`
-- `frontend.py` -> 转发到 `frontend.app`
-
-## 目录结构
+## 项目结构
 
 ```text
 stock_ai_agent/
@@ -22,58 +20,42 @@ stock_ai_agent/
 │  ├─ app.py
 │  ├─ requirements.txt
 │  └─ Dockerfile
+├─ data/
+│  ├─ tushare_client.py
+│  ├─ eastmoney_api.py
+│  └─ calculator.py
 ├─ docker-compose.yml
 ├─ main.py
 └─ frontend.py
 ```
 
-## 本地启动（开发）
+> 兼容入口：  
+> `main.py` -> `backend.main:app`  
+> `frontend.py` -> `frontend.app`
 
-### 1) 启动后端
+## 启动方式
+
+### 本地开发
+
+后端（8001）：
 
 ```bash
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8001
 ```
 
-### 2) 启动前端
+前端（6006）：
 
 ```bash
 streamlit run frontend/app.py --server.port 6006 --server.address 0.0.0.0
 ```
 
-默认前端请求 `http://localhost:8001`，也可以通过环境变量覆盖：
+前端默认请求 `http://localhost:8001`，也可通过环境变量覆盖：
 
 ```bash
 set BACKEND_URL=http://localhost:8001
 ```
 
-## Docker 部署
-
-### 方式一：分别构建与运行（同一网络）
-
-先创建网络（只需一次）：
-
-```bash
-docker network create stock-ai-net
-```
-
-后端：
-
-```bash
-docker build -t stock-ai-backend:v1 -f backend/Dockerfile .
-docker run -d --name stock-backend --network stock-ai-net -p 8001:8001 --env-file .env stock-ai-backend:v1
-```
-
-前端：
-
-```bash
-docker build -t stock-ai-frontend:v1 -f frontend/Dockerfile .
-docker run -d --name stock-frontend --network stock-ai-net -p 6006:6006 -e BACKEND_URL=http://stock-backend:8001 stock-ai-frontend:v1
-```
-
-说明：前端容器通过容器名 `stock-backend` 访问后端，依赖同一 Docker 网络下的内置 DNS 解析。
-
-### 方式二：docker compose（推荐）
+### Docker（推荐 compose）
 
 ```bash
 docker compose up --build
@@ -83,3 +65,62 @@ docker compose up --build
 
 - 后端健康检查：`http://localhost:8001/health`
 - 前端页面：`http://localhost:6006`
+
+## 数据源策略（自动回退）
+
+当前采用“主源 + 备用源”策略：
+
+- 主源：Tushare
+- 备用：Eastmoney（免费）
+
+当主源权限不足、限流或异常时，会自动切换备用源，常见场景：
+
+- 行情快照/实时价：Tushare -> Eastmoney
+- 历史日线：Tushare -> Eastmoney K 线
+- 估值数据：Tushare `daily_basic` -> Eastmoney 字段
+
+返回结果中通常包含 `source` 字段，表示命中数据源。
+
+## 主要功能（API）
+
+### 基础与量化面板
+
+- `GET /api/market/quote`
+- `GET /api/market/history`
+- `GET /api/indicator/technical`
+- `GET /api/indicator/bollinger`
+- `GET /api/indicator/kdj`
+- `GET /api/risk/summary`
+- `GET /api/risk/var`
+- `GET /api/strategy/support-resistance`
+- `GET /api/fundamental/valuation`
+- `GET /api/workbench/overview`
+
+### 投资分析扩展
+
+- `GET /api/alt/polymarket`
+- `GET /api/alert/market-volatility`
+- `POST /api/research/deep-report`
+- `POST /api/research/expert-debate`
+- `GET /api/analysis/technical-score`
+- `POST /api/analysis/scenario-impact`
+- `POST /api/portfolio/rebalance`
+- `GET /api/analysis/sentiment-proxy`
+- `GET /api/analysis/ma-backtest`
+- `GET /api/analysis/rotation`
+- `POST /api/workflow/investment-plan`（一键投研策略工作流）
+
+## 前端功能导航
+
+前端包含两大功能区：
+
+- 金融功能面板（工作台总览 + 10 个常用量化功能）
+- 高级投资分析（新增 10 项扩展能力 + 投研策略工作流）
+
+其中“投研策略工作流”会自动输出：
+
+- 市场状态（评分、风险等级、预警）
+- 建议仓位（目标仓位 / 现金比例）
+- 执行计划（动作、止损止盈、复盘周期）
+- 风控检查清单
+- LLM 执行摘要

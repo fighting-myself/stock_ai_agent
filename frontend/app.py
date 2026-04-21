@@ -290,3 +290,200 @@ with tab10:
         if not data.get("available", True):
             st.warning(f"估值数据暂不可用：{data.get('reason', '未知原因')}")
         st.json(data)
+
+st.divider()
+st.subheader("🚀 高级投资分析（新增10项）")
+
+feature = st.selectbox(
+    "选择高级功能",
+    [
+        "投研策略工作流",
+        "Polymarket预测市场",
+        "大盘波动预警",
+        "深度研报",
+        "专家辩论",
+        "技术分析评分卡",
+        "事件冲击情景分析",
+        "组合再平衡建议",
+        "情绪代理指标",
+        "均线策略回测",
+        "板块/标的轮动对比",
+    ],
+    key="advanced_feature",
+)
+
+if feature == "Polymarket预测市场":
+    pass
+
+if feature == "投研策略工作流":
+    code = st.text_input("股票代码", "600519", key="wf_code")
+    days = st.slider("分析天数", min_value=60, max_value=300, value=120, key="wf_days")
+    style = st.selectbox("风格", ["conservative", "balanced", "aggressive"], index=1, key="wf_style")
+    if st.button("生成投研策略方案", key="wf_btn"):
+        data, err = safe_post_json(
+            f"{BACKEND_URL}/api/workflow/investment-plan",
+            payload={"code": code, "days": days, "style": style},
+            timeout=180,
+        )
+        if err:
+            st.error(err)
+        else:
+            st.markdown("### 执行摘要")
+            st.write(data.get("summary", ""))
+            plan = data.get("plan", {})
+            market = plan.get("market_state", {})
+            pos = plan.get("positioning", {})
+            exe = plan.get("execution", {})
+            c1, c2, c3 = st.columns(3)
+            c1.metric("综合评分", market.get("overview_score"))
+            c2.metric("风险等级", market.get("risk_level"))
+            c3.metric("预警级别", market.get("alert_level"))
+            c4, c5 = st.columns(2)
+            c4.metric("目标仓位", pos.get("target_exposure"))
+            c5.metric("现金比例", pos.get("cash_ratio"))
+            st.markdown("### 执行计划")
+            st.write(exe)
+            st.markdown("### 风控检查清单")
+            for item in plan.get("checks", []):
+                st.write(f"- {item}")
+            st.json(data)
+
+elif feature == "Polymarket预测市场":
+    keyword = st.text_input("关键词", "stock", key="pm_keyword")
+    limit = st.slider("返回条数", min_value=5, max_value=30, value=10, key="pm_limit")
+    if st.button("查询预测市场", key="pm_btn"):
+        data, err = safe_get_json(f"{BACKEND_URL}/api/alt/polymarket", params={"keyword": keyword, "limit": limit}, timeout=60)
+        if err:
+            st.error(err)
+        else:
+            st.dataframe(pd.DataFrame(data.get("markets", [])), use_container_width=True)
+            st.json(data)
+
+elif feature == "大盘波动预警":
+    code = st.text_input("指数代码", "000001", key="alert_code")
+    days = st.slider("观察天数", min_value=20, max_value=240, value=60, key="alert_days")
+    if st.button("生成波动预警", key="alert_btn"):
+        data, err = safe_get_json(f"{BACKEND_URL}/api/alert/market-volatility", params={"code": code, "days": days}, timeout=60)
+        if err:
+            st.error(err)
+        else:
+            if data["level"] == "red":
+                st.error(data["message"])
+            elif data["level"] == "yellow":
+                st.warning(data["message"])
+            else:
+                st.success(data["message"])
+            st.json(data)
+
+elif feature == "深度研报":
+    topic = st.text_input("研报主题", "白酒行业景气度", key="report_topic")
+    code = st.text_input("标的代码", "600519", key="report_code")
+    if st.button("生成深度研报", key="report_btn"):
+        data, err = safe_post_json(f"{BACKEND_URL}/api/research/deep-report", payload={"topic": topic, "code": code}, timeout=180)
+        if err:
+            st.error(err)
+        else:
+            st.markdown(data.get("report", ""))
+
+elif feature == "专家辩论":
+    topic = st.text_input("辩论主题", "当前估值是否透支未来增长", key="debate_topic")
+    code = st.text_input("标的代码", "600519", key="debate_code")
+    if st.button("发起专家辩论", key="debate_btn"):
+        data, err = safe_post_json(f"{BACKEND_URL}/api/research/expert-debate", payload={"topic": topic, "code": code}, timeout=220)
+        if err:
+            st.error(err)
+        else:
+            st.markdown("### 多头观点")
+            st.write(data.get("bull", ""))
+            st.markdown("### 空头观点")
+            st.write(data.get("bear", ""))
+            st.markdown("### 裁决")
+            st.write(data.get("judge", ""))
+
+elif feature == "技术分析评分卡":
+    code = st.text_input("股票代码", "600519", key="tscore_code")
+    days = st.slider("计算天数", min_value=60, max_value=300, value=120, key="tscore_days")
+    if st.button("生成技术评分", key="tscore_btn"):
+        data, err = safe_get_json(f"{BACKEND_URL}/api/analysis/technical-score", params={"code": code, "days": days}, timeout=60)
+        if err:
+            st.error(err)
+        else:
+            st.metric("技术评分", data["score"])
+            st.metric("信号", data["signal"])
+            st.json(data)
+
+elif feature == "事件冲击情景分析":
+    code = st.text_input("股票代码", "600519", key="scene_code")
+    event = st.text_area("事件描述", "若出现超预期降息，对白酒龙头影响如何？", key="scene_event")
+    horizon_days = st.slider("观察窗口(天)", min_value=5, max_value=120, value=20, key="scene_horizon")
+    if st.button("分析事件冲击", key="scene_btn"):
+        data, err = safe_post_json(
+            f"{BACKEND_URL}/api/analysis/scenario-impact",
+            payload={"code": code, "event": event, "horizon_days": horizon_days},
+            timeout=180,
+        )
+        if err:
+            st.error(err)
+        else:
+            st.write(data.get("analysis", ""))
+
+elif feature == "组合再平衡建议":
+    raw = st.text_area("组合输入（每行: code,weight）", "600519,0.4\n000858,0.3\n601318,0.3", key="rebalance_raw")
+    days = st.slider("历史窗口", min_value=60, max_value=300, value=120, key="rebalance_days")
+    if st.button("生成再平衡建议", key="rebalance_btn"):
+        positions = []
+        for line in raw.strip().splitlines():
+            code, weight = line.split(",")
+            positions.append({"code": code.strip(), "weight": float(weight.strip())})
+        data, err = safe_post_json(
+            f"{BACKEND_URL}/api/portfolio/rebalance",
+            payload={"positions": positions, "days": days},
+            timeout=120,
+        )
+        if err:
+            st.error(err)
+        else:
+            st.dataframe(pd.DataFrame(data.get("suggestions", [])), use_container_width=True)
+            st.json(data)
+
+elif feature == "情绪代理指标":
+    code = st.text_input("股票代码", "600519", key="sent_code")
+    days = st.slider("观察天数", min_value=30, max_value=240, value=60, key="sent_days")
+    if st.button("计算情绪指标", key="sent_btn"):
+        data, err = safe_get_json(f"{BACKEND_URL}/api/analysis/sentiment-proxy", params={"code": code, "days": days}, timeout=60)
+        if err:
+            st.error(err)
+        else:
+            st.metric("情绪分", data["sentiment_score"])
+            st.metric("情绪标签", data["sentiment"])
+            st.json(data)
+
+elif feature == "均线策略回测":
+    code = st.text_input("股票代码", "600519", key="bt_code")
+    short_w = st.slider("短均线", min_value=3, max_value=20, value=5, key="bt_short")
+    long_w = st.slider("长均线", min_value=10, max_value=60, value=20, key="bt_long")
+    days = st.slider("回测天数", min_value=60, max_value=500, value=180, key="bt_days")
+    if st.button("运行回测", key="bt_btn"):
+        data, err = safe_get_json(
+            f"{BACKEND_URL}/api/analysis/ma-backtest",
+            params={"code": code, "short_window": short_w, "long_window": long_w, "days": days},
+            timeout=60,
+        )
+        if err:
+            st.error(err)
+        else:
+            st.metric("策略收益(%)", data.get("strategy_return_pct", 0))
+            st.metric("基准收益(%)", data.get("benchmark_return_pct", 0))
+            st.metric("超额收益(%)", data.get("excess_return_pct", 0))
+            st.json(data)
+
+elif feature == "板块/标的轮动对比":
+    codes = st.text_input("代码列表（逗号分隔）", "600519,000858,601318,000001", key="rot_codes")
+    days = st.slider("对比天数", min_value=20, max_value=240, value=60, key="rot_days")
+    if st.button("生成轮动排名", key="rot_btn"):
+        data, err = safe_get_json(f"{BACKEND_URL}/api/analysis/rotation", params={"codes": codes, "days": days}, timeout=90)
+        if err:
+            st.error(err)
+        else:
+            st.dataframe(pd.DataFrame(data.get("ranking", [])), use_container_width=True)
+            st.json(data)
