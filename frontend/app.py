@@ -3,7 +3,7 @@ import os
 import httpx
 import streamlit as st
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8001")
 
 st.set_page_config(page_title="股票AI助手", layout="wide")
 st.title("📈 股票AI智能助手（LangGraph多智能体）")

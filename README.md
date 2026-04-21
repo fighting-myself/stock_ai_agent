@@ -49,21 +49,29 @@ set BACKEND_URL=http://localhost:8000
 
 ## Docker 部署
 
-### 方式一：分别构建与运行
+### 方式一：分别构建与运行（同一网络）
+
+先创建网络（只需一次）：
+
+```bash
+docker network create stock-ai-net
+```
 
 后端：
 
 ```bash
-docker build -t stock-ai-backend -f backend/Dockerfile .
-docker run --rm -p 8000:8000 --env-file .env stock-ai-backend
+docker build -t stock-ai-backend:v1 -f backend/Dockerfile .
+docker run -d --name stock-backend --network stock-ai-net -p 8001:8001 --env-file .env stock-ai-backend:v1
 ```
 
 前端：
 
 ```bash
-docker build -t stock-ai-frontend -f frontend/Dockerfile .
-docker run --rm -p 6006:6006 -e BACKEND_URL=http://host.docker.internal:8000 stock-ai-frontend
+docker build -t stock-ai-frontend:v1 -f frontend/Dockerfile .
+docker run -d --name stock-frontend --network stock-ai-net -p 6006:6006 -e BACKEND_URL=http://stock-backend:8001 stock-ai-frontend:v1
 ```
+
+说明：前端容器通过容器名 `backend` 访问后端，依赖同一 Docker 网络下的内置 DNS 解析。
 
 ### 方式二：docker compose（推荐）
 
