@@ -37,10 +37,13 @@ st.markdown(
     <style>
     .block-container {padding-top: 1.2rem;}
     div[data-testid="stMetric"] {
-        background: #111827;
-        border: 1px solid #1f2937;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
         border-radius: 12px;
         padding: 8px 12px;
+    }
+    div[data-testid="stMetric"] * {
+        color: #0f172a !important;
     }
     </style>
     """,
