@@ -5,7 +5,7 @@ WORKDIR /app
 COPY frontend/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-COPY frontend/app.py /app/frontend/app.py
+COPY frontend /app/frontend
 
 ENV BACKEND_URL=http://backend:8001
 
