@@ -82,6 +82,33 @@ class TushareClient:
             "amount": float(latest["amount"]),
         }
 
+    @stock_retry
+    def get_daily_basic_latest(self, code: str):
+        """获取个股最新估值指标（PE/PB/总市值等）"""
+        end = datetime.now()
+        start = end - timedelta(days=40)
+        df = self.pro.daily_basic(
+            ts_code=self._to_ts_code(code),
+            start_date=start.strftime("%Y%m%d"),
+            end_date=end.strftime("%Y%m%d"),
+            fields="ts_code,trade_date,pe,pb,ps,total_mv,circ_mv,turnover_rate,volume_ratio",
+        )
+        if df.empty:
+            raise Exception(f"{code} 估值数据为空")
+        df = df.sort_values("trade_date")
+        row = df.iloc[-1]
+        return {
+            "code": code,
+            "trade_date": str(row["trade_date"]),
+            "pe": None if pd.isna(row["pe"]) else float(row["pe"]),
+            "pb": None if pd.isna(row["pb"]) else float(row["pb"]),
+            "ps": None if pd.isna(row["ps"]) else float(row["ps"]),
+            "total_mv": None if pd.isna(row["total_mv"]) else float(row["total_mv"]),
+            "circ_mv": None if pd.isna(row["circ_mv"]) else float(row["circ_mv"]),
+            "turnover_rate": None if pd.isna(row["turnover_rate"]) else float(row["turnover_rate"]),
+            "volume_ratio": None if pd.isna(row["volume_ratio"]) else float(row["volume_ratio"]),
+        }
+
     def _to_ts_code(self, code: str):
         """600xxx → 600xxx.SH；00xxxx → 00xxxx.SZ"""
         if code.startswith("6"):

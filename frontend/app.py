@@ -42,9 +42,62 @@ if st.button("🚀 开始智能分析"):
 st.divider()
 st.subheader("📊 金融功能面板")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["1) 行情快照", "2) 历史走势", "3) RSI/MACD", "4) 风险摘要", "5) 组合分析"]
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
+    [
+        "⭐ 工作台总览",
+        "1) 行情快照",
+        "2) 历史走势",
+        "3) RSI/MACD",
+        "4) 风险摘要",
+        "5) 组合分析",
+        "6) 布林带",
+        "7) KDJ",
+        "8) VaR/CVaR",
+        "9) 支撑阻力",
+        "10) 估值面板",
+    ]
 )
+
+with tab0:
+    code = st.text_input("股票代码", "600519", key="overview_code")
+    days = st.slider("总览回看区间", min_value=60, max_value=300, value=120, key="overview_days")
+    if st.button("生成量化总览", key="overview_btn"):
+        resp = httpx.get(
+            f"{BACKEND_URL}/api/workbench/overview",
+            params={"code": code, "days": days},
+            timeout=120,
+        )
+        data = resp.json()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("综合评分", data["score"])
+        c2.metric("风险等级", data["risk_level"])
+        c3.metric("建议动作", data["action"])
+        st.info(data["comment"])
+        c4, c5, c6 = st.columns(3)
+        c4.metric("最新价", data["quote"]["price"], f'{data["quote"]["change_pct"]}%')
+        c5.metric("年化波动率(%)", data["risk"]["volatility_annual"])
+        c6.metric("最大回撤(%)", data["risk"]["max_drawdown_pct"])
+        st.markdown("#### 关键指标快照")
+        metric_df = pd.DataFrame(
+            [
+                {"指标": "RSI14", "值": data["technical"]["rsi14"]},
+                {"指标": "MACD", "值": data["technical"]["macd"]["macd"]},
+                {"指标": "布林上轨", "值": data["technical"]["boll"]["upper"]},
+                {"指标": "布林下轨", "值": data["technical"]["boll"]["lower"]},
+                {"指标": "K", "值": data["technical"]["kdj"]["k"]},
+                {"指标": "D", "值": data["technical"]["kdj"]["d"]},
+                {"指标": "J", "值": data["technical"]["kdj"]["j"]},
+                {"指标": "VaR(%)", "值": data["risk"]["var_pct"]},
+                {"指标": "CVaR(%)", "值": data["risk"]["cvar_pct"]},
+                {"指标": "PE", "值": data["valuation"]["pe"]},
+                {"指标": "PB", "值": data["valuation"]["pb"]},
+                {"指标": "支撑位", "值": data["levels"]["support"]},
+                {"指标": "阻力位", "值": data["levels"]["resistance"]},
+                {"指标": "位置/信号", "值": data["levels"]["signal"]},
+            ]
+        )
+        st.dataframe(metric_df, use_container_width=True)
+        st.json(data)
 
 with tab1:
     code = st.text_input("股票代码", "600519", key="quote_code")
@@ -126,4 +179,90 @@ with tab5:
         st.metric("组合回撤评分", data.get("portfolio_drawdown_score", 0))
         if "positions" in data:
             st.dataframe(pd.DataFrame(data["positions"]), use_container_width=True)
+        st.json(data)
+
+with tab6:
+    code = st.text_input("股票代码", "600519", key="boll_code")
+    days = st.slider("回看区间", min_value=40, max_value=300, value=90, key="boll_days")
+    window = st.slider("布林窗口", min_value=10, max_value=60, value=20, key="boll_window")
+    if st.button("计算布林带", key="boll_btn"):
+        resp = httpx.get(
+            f"{BACKEND_URL}/api/indicator/bollinger",
+            params={"code": code, "days": days, "window": window},
+            timeout=60,
+        )
+        data = resp.json()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("中轨", data["mid"])
+        c2.metric("上轨", data["upper"])
+        c3.metric("下轨", data["lower"])
+        st.json(data)
+
+with tab7:
+    code = st.text_input("股票代码", "600519", key="kdj_code")
+    days = st.slider("回看区间", min_value=40, max_value=300, value=90, key="kdj_days")
+    period = st.slider("KDJ 周期", min_value=5, max_value=30, value=9, key="kdj_period")
+    if st.button("计算 KDJ", key="kdj_btn"):
+        resp = httpx.get(
+            f"{BACKEND_URL}/api/indicator/kdj",
+            params={"code": code, "days": days, "period": period},
+            timeout=60,
+        )
+        data = resp.json()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("K", data["k"])
+        c2.metric("D", data["d"])
+        c3.metric("J", data["j"])
+        st.json(data)
+
+with tab8:
+    code = st.text_input("股票代码", "600519", key="var_code")
+    days = st.slider("回看区间", min_value=60, max_value=300, value=120, key="var_days")
+    confidence = st.slider("置信度", min_value=0.90, max_value=0.99, value=0.95, step=0.01, key="var_conf")
+    if st.button("计算 VaR/CVaR", key="var_btn"):
+        resp = httpx.get(
+            f"{BACKEND_URL}/api/risk/var",
+            params={"code": code, "days": days, "confidence": confidence},
+            timeout=60,
+        )
+        data = resp.json()
+        c1, c2 = st.columns(2)
+        c1.metric("VaR(%)", data["var_pct"])
+        c2.metric("CVaR(%)", data["cvar_pct"])
+        st.json(data)
+
+with tab9:
+    code = st.text_input("股票代码", "600519", key="sr_code")
+    days = st.slider("回看区间", min_value=40, max_value=300, value=120, key="sr_days")
+    lookback = st.slider("支撑阻力窗口", min_value=10, max_value=60, value=20, key="sr_lookback")
+    if st.button("分析支撑阻力", key="sr_btn"):
+        resp = httpx.get(
+            f"{BACKEND_URL}/api/strategy/support-resistance",
+            params={"code": code, "days": days, "lookback": lookback},
+            timeout=60,
+        )
+        data = resp.json()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("当前价", data["price"])
+        c2.metric("支撑位", data["support"])
+        c3.metric("阻力位", data["resistance"])
+        st.info(f"信号：{data['signal']}")
+        st.json(data)
+
+with tab10:
+    code = st.text_input("股票代码", "600519", key="valuation_code")
+    if st.button("查询估值面板", key="valuation_btn"):
+        resp = httpx.get(
+            f"{BACKEND_URL}/api/fundamental/valuation",
+            params={"code": code},
+            timeout=60,
+        )
+        data = resp.json()
+        c1, c2, c3 = st.columns(3)
+        c1.metric("PE", data.get("pe"))
+        c2.metric("PB", data.get("pb"))
+        c3.metric("PS", data.get("ps"))
+        c4, c5 = st.columns(2)
+        c4.metric("总市值(万元)", data.get("total_mv"))
+        c5.metric("流通市值(万元)", data.get("circ_mv"))
         st.json(data)
