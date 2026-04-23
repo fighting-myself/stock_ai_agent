@@ -3,6 +3,7 @@ from langgraph.graph import StateGraph, END
 from core.state import AgentState
 from langchain_core.messages import AIMessage, HumanMessage
 
+
 class AgentFactory:
     @staticmethod
     def create_agent(agent_type: str, model, tools):
@@ -14,12 +15,16 @@ class AgentFactory:
 
         # ========== 2. Plan & Execute（修复消息结构）==========
         elif agent_type == "plan_execute":
+
             async def plan_node(state: AgentState):
                 from core.prompts import PLANNER_PROMPT
-                res = await model.ainvoke([
-                    ("system", PLANNER_PROMPT),
-                    state["messages"][-1]
-                ])
+
+                res = await model.ainvoke(
+                    [
+                        ("system", PLANNER_PROMPT.strip()),
+                        state["messages"][-1],
+                    ]
+                )
                 return {"messages": [AIMessage(content=res.content)]}
 
             async def execute_node(state: AgentState):
@@ -36,21 +41,21 @@ class AgentFactory:
         # ========== 3. Reflection 【彻底修复：保留user消息】==========
         elif agent_type == "reflection":
             from core.prompts import REFLECTION_PROMPT
-        
+
             async def run_agent(state: AgentState):
                 # 执行工具，保留所有消息
                 return await create_react_agent(model, tools).ainvoke(state)
-        
+
             async def reflect_node(state: AgentState):
                 # 🔥 🔥 🔥 修复：必须把【用户原始消息】放在最前面！
                 messages = [
                     state["messages"][0],  # user 消息（必须保留）
                     state["messages"][1],  # assistant 消息
-                    ("system", REFLECTION_PROMPT),
+                    ("system", REFLECTION_PROMPT.strip()),
                 ]
                 res = await model.ainvoke(messages)
                 return {"messages": [AIMessage(content=res.content)]}
-        
+
             workflow = StateGraph(AgentState)
             workflow.add_node("run", run_agent)
             workflow.add_node("reflect", reflect_node)
@@ -61,6 +66,7 @@ class AgentFactory:
 
         # ========== 4. ReWoo（修复消息结构）==========
         elif agent_type == "rewoo":
+
             async def planner(state: AgentState):
                 tool_names = [t.name for t in tools]
                 prompt = f"可用工具：{tool_names}，请执行用户查询"
@@ -78,5 +84,4 @@ class AgentFactory:
             return workflow.compile()
 
         # ========== 默认 ==========
-        else:
-            return create_react_agent(model, tools)
+        return create_react_agent(model, tools)

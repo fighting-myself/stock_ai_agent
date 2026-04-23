@@ -3,6 +3,7 @@ from data.tushare_client import TushareClient
 from data.calculator import StockCalculator
 from data.market_intel_client import MarketIntelClient
 from data.ths_ifind_client import ThsIfindClient
+from tools.clock_tool import build_clock_answer
 
 
 class StockTools:
@@ -11,6 +12,10 @@ class StockTools:
         self.calc = StockCalculator()
         self.intel = MarketIntelClient()
         self.ths = ThsIfindClient()
+
+    async def get_current_datetime(self, iana_timezone: str = ""):
+        """返回调用瞬间的墙钟时间快照（UTC、进程本地、可选 IANA 换算）。"""
+        return build_clock_answer(iana_timezone or "")
 
     async def get_stock_price(self, code: str):
         """获取股票实时价格"""
@@ -61,6 +66,16 @@ class StockTools:
     def get_all_tools(cls):
         t = cls()
         return [
+            Tool(
+                name="get_current_datetime",
+                func=lambda c: None,
+                coroutine=t.get_current_datetime,
+                description=(
+                    "获取当前时刻的时钟快照（调用瞬间由运行环境返回，非模型记忆）。"
+                    "可选传入 IANA 时区名（如 Asia/Shanghai）以换算当地墙钟；可传空字符串仅要 UTC 与系统本地。"
+                    "凡用户提到「今天」「此刻」「本周」等相对时间，或涉及时效的事实推理，应先调用本工具再作答。"
+                ),
+            ),
             Tool(
                 name="get_stock_price",
                 func=lambda c: None,

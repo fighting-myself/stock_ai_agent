@@ -1,6 +1,9 @@
 import os
 
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 import pandas as pd
 import streamlit as st
 
@@ -133,7 +136,11 @@ with main_tab:
             with st.spinner("AI 正在思考中，请稍候..."):
                 data, err = safe_post_json(
                     f"{backend_url}/api/agent/analyze",
-                    params={"query": query, "agent_type": agent_type, "model_name": model_name},
+                    params={
+                        "query": query,
+                        "agent_type": agent_type,
+                        "model_name": model_name,
+                    },
                     timeout=120,
                 )
             if err:
