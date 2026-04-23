@@ -147,7 +147,7 @@ async def health():
         "default_model": settings.DEFAULT_MODEL,
         "tushare_configured": bool(settings.TUSHARE_TOKEN.strip()),
         "vllm_ready": settings.vllm_ready,
-        "ths_ifind_ready": settings.ths_ifind_ready,
+        "ext_intel_ready": settings.ths_ifind_ready,
     }
 
 
@@ -459,80 +459,93 @@ async def system_runtime():
         "vllm_ready": settings.vllm_ready,
         "vllm_base_url_masked": _mask_url(settings.VLLM_BASE_URL),
         "vllm_model": settings.VLLM_MODEL or None,
-        "ths_ifind_ready": settings.ths_ifind_ready,
+        "ext_intel_ready": settings.ths_ifind_ready,
         "default_model": settings.DEFAULT_MODEL,
         "default_agent_type": settings.DEFAULT_AGENT_TYPE,
         "agent_paradigms": ["react", "plan_execute", "reflection", "rewoo"],
         "structured_intel_sources": [
-            {"id": "tushare", "label": "历史行情 / 快照", "role": "量化与技术面事实"},
-            {"id": "eastmoney_ann", "label": "东方财富公告", "role": "非结构化披露"},
-            {"id": "ths_ifind", "label": "同花顺 iFinD", "role": "专题报表与问财式检索（需 refresh_token）"},
+            {"id": "quotes", "label": "证券行情与技术指标", "role": "量化与价格事实"},
+            {"id": "disclosure", "label": "监管披露提要", "role": "公告与重大事项标题"},
+            {"id": "extension", "label": "扩展专题与条件检索", "role": "可选增值数据（按环境启用）"},
         ],
     }
 
 
 @app.get("/api/intel/snapshot")
 async def intel_snapshot(code: str, notices_limit: int = 10, ths_days: int = 14):
-    """非结构化情报快照：公告 + 可选同花顺专题报表 + 行情，供界面「情报面板」。"""
+    """综合监测：监管披露提要、证券行情、量价代理与可选扩展专题披露。"""
     code = code.strip()
-    notices = intel_client.fetch_recent_notices(code, page_size=min(max(notices_limit, 1), 30))
+    notices, ann_err = intel_client.fetch_recent_notices_ex(
+        code, page_size=min(max(notices_limit, 1), 30)
+    )
     quote = ts_client.get_quote_snapshot(code)
-    ths_digest = ""
+    extension_digest = ""
     if settings.ths_ifind_ready:
         try:
-            ths_digest = ths_http.report_query_titles(code, days=min(max(ths_days, 1), 365))
+            extension_digest = ths_http.report_query_titles(code, days=min(max(ths_days, 1), 365))
         except Exception as exc:
-            ths_digest = f"同花顺拉取失败: {exc}"
+            logger.warning(f"extension report query failed: {exc}")
+            extension_digest = "（扩展专题披露暂不可用）"
     else:
-        ths_digest = "未配置 THS_IFIND_REFRESH_TOKEN，已跳过同花顺专题报表。"
+        extension_digest = "（扩展专题披露未启用）"
     sent = _sentiment_payload(code, 60)
     return {
         "code": code,
         "quote": quote,
         "announcements": notices,
-        "ths_disclosure_digest": ths_digest,
+        "announcements_ok": ann_err is None,
+        "extension_disclosure_digest": extension_digest,
+        "ths_disclosure_digest": extension_digest,
         "volume_sentiment_proxy": sent,
     }
 
 
 @app.post("/api/intel/ths-wencai")
 async def intel_ths_wencai(req: ThsWencaiRequest):
-    """同花顺问财式检索（需 token）；返回自然语言可读的 JSON 文本片段。"""
+    """扩展条件检索（可选数据源）；返回可读文本。"""
     if not settings.ths_ifind_ready:
-        return {"ok": False, "text": "未配置 THS_IFIND_REFRESH_TOKEN，无法调用同花顺问财接口。"}
+        return {
+            "ok": True,
+            "skipped": True,
+            "text": "扩展条件检索未在当前环境启用。请使用「智能体问答」结合行情与披露工具完成分析。",
+        }
     try:
         text = ths_http.smart_stock_picking_text(req.question.strip())
-        return {"ok": True, "text": text}
+        return {"ok": True, "skipped": False, "text": text}
     except Exception as exc:
-        logger.error(f"ths wencai: {exc}")
-        return {"ok": False, "text": f"调用失败: {exc}"}
+        logger.error(f"extension wencai: {exc}")
+        return {"ok": False, "skipped": False, "text": "扩展条件检索暂不可用，请稍后重试或通过智能体问答拉取事实数据。"}
 
 
 @app.post("/api/intel/investment-signal")
 async def intel_investment_signal(req: InvestmentSignalRequest):
-    """综合行情、公告、量价情绪代理及可选同花顺报表，经 LLM 输出一段自然语言投资观察（非结构化）。"""
+    """综合行情、披露提要、量价代理及可选扩展专题披露，经 LLM 输出自然语言观察。"""
     code = req.code.strip()
     model_name = (req.model_name or settings.DEFAULT_MODEL).strip()
     quote = ts_client.get_quote_snapshot(code)
-    notices = intel_client.fetch_recent_notices(code, page_size=10)
-    ann_lines = "\n".join(f"- {n.get('date', '')} {n.get('title', '')}" for n in notices) or "- （无近期公告标题）"
+    notices, ann_err = intel_client.fetch_recent_notices_ex(code, page_size=10)
+    if ann_err is not None:
+        ann_lines = "- （监管披露提要暂不可用）"
+    else:
+        ann_lines = "\n".join(f"- {n.get('date', '')} {n.get('title', '')}" for n in notices) or "- （无近期公告标题）"
     sent = _sentiment_payload(code, 60)
-    ths_block = ""
-    sources = ["Tushare 行情", "东方财富公告标题", "量价情绪代理指标"]
+    ext_block = ""
+    sources = ["证券行情与技术指标", "监管披露提要", "量价联动代理指标"]
     if req.include_ths_reports and settings.ths_ifind_ready:
         try:
-            ths_block = ths_http.report_query_titles(code, days=14)
-            sources.append("同花顺 iFinD 专题报表")
+            ext_block = ths_http.report_query_titles(code, days=14)
+            sources.append("扩展专题披露提要")
         except Exception as exc:
-            ths_block = f"（同花顺专题报表不可用：{exc}）"
+            logger.warning(f"investment signal extension report: {exc}")
+            ext_block = "（扩展专题披露暂不可用）"
     elif req.include_ths_reports:
-        ths_block = "（未配置同花顺 token，已跳过）"
+        ext_block = "（扩展专题披露未启用）"
     facts = (
         f"标的代码: {code}\n"
         f"行情快照: {quote}\n"
-        f"近端公告标题:\n{ann_lines}\n"
-        f"量价情绪代理: {sent}\n"
-        f"同花顺专题报表摘要:\n{ths_block or '（未启用或未配置）'}\n"
+        f"近端监管披露标题:\n{ann_lines}\n"
+        f"量价联动代理: {sent}\n"
+        f"扩展专题披露提要:\n{ext_block or '（未并入）'}\n"
     )
     prompt = (
         "你是合规的投研写作助手。请仅根据下列「事实材料」撰写一段中文投资观察结论（自然语言段落），"

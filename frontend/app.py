@@ -35,23 +35,65 @@ st.set_page_config(page_title="股票 AI 投研决策系统", layout="wide")
 st.markdown(
     """
     <style>
-    .block-container {padding-top: 1.2rem;}
+    html, body, [class*="css"] { font-family: "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
+    [data-testid="stAppViewContainer"] > .main {
+        background: linear-gradient(165deg, #f8fafc 0%, #eef2ff 45%, #f1f5f9 100%);
+    }
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 2.5rem !important;
+        max-width: 1180px;
+    }
+    h1 { font-weight: 700 !important; letter-spacing: -0.03em !important; color: #0f172a !important; }
+    [data-testid="stHeader"] { background: rgba(255,255,255,0.85); backdrop-filter: blur(8px); }
+    div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+        gap: 4px;
+        background: rgba(255,255,255,0.6);
+        border-radius: 12px;
+        padding: 6px 8px;
+        border: 1px solid #e2e8f0;
+    }
+    div[data-testid="stTabs"] button[data-baseweb="tab"] {
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+    }
+    div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
+        background: #fff !important;
+        box-shadow: 0 1px 2px rgba(15,23,42,0.08);
+        color: #1d4ed8 !important;
+        font-weight: 600;
+    }
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 14px !important;
+        padding: 1.1rem 1.35rem !important;
+        box-shadow: 0 4px 24px rgba(15, 23, 42, 0.04);
+    }
     div[data-testid="stMetric"] {
-        background: #f8fafc;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
         border: 1px solid #e2e8f0;
         border-radius: 12px;
-        padding: 8px 12px;
+        padding: 10px 14px;
     }
-    div[data-testid="stMetric"] * {
-        color: #0f172a !important;
+    div[data-testid="stMetric"] * { color: #0f172a !important; }
+    div[data-testid="stMetric"] label { color: #64748b !important; font-size: 0.8rem !important; }
+    .sr-section-title {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: #0f172a;
+        margin: 0 0 0.15rem 0;
+        letter-spacing: 0.01em;
     }
+    .sr-section-desc { font-size: 0.82rem; color: #64748b; margin: 0 0 1rem 0; line-height: 1.5; }
+    .sr-disclaimer { font-size: 0.78rem; color: #94a3b8; margin-bottom: 1.25rem; line-height: 1.55; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.title("企业级投研分析平台")
-st.caption("多数据源 · 多因子分析 · 策略工作流 · 风控执行")
+st.title("股票 AI 投研决策系统")
+st.caption("多源数据融合 · LangGraph 决策编排 · 量化与披露联动分析")
 
 with st.sidebar:
     st.subheader("系统配置")
@@ -71,8 +113,8 @@ with st.sidebar:
             bits = [f"status={health.get('status')}", f"tushare={'✓' if health.get('tushare_configured') else '✗'}"]
             if "vllm_ready" in health:
                 bits.append(f"vllm={'✓' if health.get('vllm_ready') else '✗'}")
-            if "ths_ifind_ready" in health:
-                bits.append(f"ths={'✓' if health.get('ths_ifind_ready') else '✗'}")
+            if "ext_intel_ready" in health:
+                bits.append(f"扩展={'✓' if health.get('ext_intel_ready') else '✗'}")
             st.success("服务正常 · " + " ".join(bits))
 
 main_tab, capability_tab, market_tab, risk_tab, strategy_tab = st.tabs(
@@ -80,191 +122,213 @@ main_tab, capability_tab, market_tab, risk_tab, strategy_tab = st.tabs(
 )
 
 with main_tab:
-    st.subheader("AI 智能体问答")
-    query = st.text_area("输入问题", "分析股票600519，获取当前价格并计算5日均线", height=110)
-    if st.button("执行智能分析", type="primary"):
-        with st.spinner("AI 正在思考中，请稍候..."):
-            data, err = safe_post_json(
-                f"{backend_url}/api/agent/analyze",
-                params={"query": query, "agent_type": agent_type, "model_name": model_name},
-                timeout=120,
-            )
-        if err:
-            st.error(err)
-        elif data.get("success"):
-            st.success("执行完成")
-            st.write(data["data"])
-            st.caption(f"Agent: {data.get('agent_type')} | Model: {data.get('model')}")
-        else:
-            st.error(data.get("error", "未知错误"))
+    with st.container(border=True):
+        st.markdown('<p class="sr-section-title">智能体问答</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="sr-section-desc">自然语言下达分析任务；后端按所选 Agent 范式与模型执行工具调用与推理。</p>',
+            unsafe_allow_html=True,
+        )
+        query = st.text_area("问题描述", "分析股票600519，获取当前价格并计算5日均线", height=110, label_visibility="visible")
+        if st.button("执行智能分析", type="primary", use_container_width=True):
+            with st.spinner("AI 正在思考中，请稍候..."):
+                data, err = safe_post_json(
+                    f"{backend_url}/api/agent/analyze",
+                    params={"query": query, "agent_type": agent_type, "model_name": model_name},
+                    timeout=120,
+                )
+            if err:
+                st.error(err)
+            elif data.get("success"):
+                st.success("执行完成")
+                st.write(data["data"])
+                st.caption(f"Agent: {data.get('agent_type')} | Model: {data.get('model')}")
+            else:
+                st.error(data.get("error", "未知错误"))
 
-    st.divider()
-    st.subheader("量化驾驶舱总览")
-    c1, c2 = st.columns([1, 1])
-    code = c1.text_input("股票代码", "600519", key="overview_code")
-    days = c2.slider("回看天数", 60, 300, 120, key="overview_days")
-    if st.button("生成总览", key="overview_btn"):
-        with st.spinner("正在生成量化总览..."):
-            data, err = safe_get_json(f"{backend_url}/api/workbench/overview", params={"code": code, "days": days}, timeout=120)
-        if err:
-            st.error(err)
-        else:
-            metric_row(
-                [
-                    {"label": "综合评分", "value": data["score"]},
-                    {"label": "风险等级", "value": data["risk_level"]},
-                    {"label": "建议动作", "value": data["action"]},
-                    {"label": "最新价", "value": data["quote"]["price"], "delta": f'{data["quote"]["change_pct"]}%'},
-                ]
-            )
-            st.info(data.get("comment", ""))
-            st.dataframe(
-                pd.DataFrame(
+    with st.container(border=True):
+        st.markdown('<p class="sr-section-title">量化驾驶舱总览</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="sr-section-desc">技术面、风险与估值维度的综合评分与建议动作摘要。</p>',
+            unsafe_allow_html=True,
+        )
+        c1, c2 = st.columns([1, 1])
+        code = c1.text_input("证券代码", "600519", key="overview_code")
+        days = c2.slider("回看天数", 60, 300, 120, key="overview_days")
+        if st.button("生成总览", key="overview_btn", use_container_width=True):
+            with st.spinner("正在生成量化总览..."):
+                data, err = safe_get_json(f"{backend_url}/api/workbench/overview", params={"code": code, "days": days}, timeout=120)
+            if err:
+                st.error(err)
+            else:
+                metric_row(
                     [
-                        {"指标": "RSI14", "值": data["technical"]["rsi14"]},
-                        {"指标": "MACD", "值": data["technical"]["macd"]["macd"]},
-                        {"指标": "VaR", "值": data["risk"]["var_pct"]},
-                        {"指标": "CVaR", "值": data["risk"]["cvar_pct"]},
-                        {"指标": "支撑位", "值": data["levels"]["support"]},
-                        {"指标": "阻力位", "值": data["levels"]["resistance"]},
+                        {"label": "综合评分", "value": data["score"]},
+                        {"label": "风险等级", "value": data["risk_level"]},
+                        {"label": "建议动作", "value": data["action"]},
+                        {"label": "最新价", "value": data["quote"]["price"], "delta": f'{data["quote"]["change_pct"]}%'},
                     ]
-                ),
-                use_container_width=True,
-            )
+                )
+                st.info(data.get("comment", ""))
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {"指标": "RSI14", "值": data["technical"]["rsi14"]},
+                            {"指标": "MACD", "值": data["technical"]["macd"]["macd"]},
+                            {"指标": "VaR", "值": data["risk"]["var_pct"]},
+                            {"指标": "CVaR", "值": data["risk"]["cvar_pct"]},
+                            {"指标": "支撑位", "值": data["levels"]["support"]},
+                            {"指标": "阻力位", "值": data["levels"]["resistance"]},
+                        ]
+                    ),
+                    use_container_width=True,
+                )
 
 with capability_tab:
-    st.subheader("与简历对齐的项目叙事（演示给面试官）")
-    st.caption("业务效果类表述以简历为准；本界面用于展示技术链路，不构成投资建议。")
-    with st.expander("项目描述 / 职责 / 业绩（简历原文要点）", expanded=True):
+    st.markdown(
+        '<p class="sr-disclaimer">本页功能仅供研究与内部演示；模型输出不构成投资建议或证券咨询服务。</p>',
+        unsafe_allow_html=True,
+    )
+
+    with st.container(border=True):
+        st.markdown('<p class="sr-section-title">发行人公开披露与证券行情综合监测</p>', unsafe_allow_html=True)
         st.markdown(
-            """
-**项目描述**：布局 AI 金融投资领域；传统量化模型难以处理海量非结构化市场信息，导致决策滞后、风险识别不足；构建可解析新闻/财报/社交舆情并生成投资信号的智能系统。
-
-**项目职责**：基于 LangGraph 实现决策编排，整合历史行情、公司公告与实时新闻流类数据；针对推理延迟采用 **vLLM** 做 OpenAI 兼容网关加速文本生成与信息抽取；系统 **容器化** 部署，便于在云环境弹性伸缩（单仓代码，前后端可独立扩缩）。
-
-**项目业绩（简历口径）**：非结构化信息处理效率显著提升；策略回测超额收益（以实际回测为准）；vLLM 侧降低端到端响应延迟，为业务提供稳定推理底座。
-            """
+            '<p class="sr-section-desc">同步上市公司<strong>监管披露</strong>、<strong>二级市场行情</strong>、'
+            "<strong>量价联动状态指征</strong>及可选<strong>扩展专题披露</strong>，形成单一标的的综合监测视图。</p>",
+            unsafe_allow_html=True,
         )
-
-    st.subheader("系统运行态（后端探测）")
-    if st.button("刷新运行态", key="runtime_btn"):
-        rt, err = safe_get_json(f"{backend_url}/api/system/runtime", timeout=15)
-        if err:
-            st.error(err)
-        else:
-            st.session_state["runtime"] = rt
-    rt = st.session_state.get("runtime")
-    if rt:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Tushare", "已配置" if rt.get("tushare_configured") else "未配置")
-        c2.metric("vLLM 就绪", "是" if rt.get("vllm_ready") else "否")
-        c3.metric("同花顺 iFinD", "已配置" if rt.get("ths_ifind_ready") else "未配置")
-        c4.metric("默认模型", rt.get("default_model", "-"))
-        st.write(rt.get("stack", ""))
-        st.info(rt.get("deployment_note", ""))
-        for row in rt.get("structured_intel_sources") or []:
-            st.caption(f"· **{row.get('label')}**：{row.get('role')}")
-
-    st.divider()
-    st.subheader("非结构化情报快照")
-    st.caption("东方财富公告 + 可选同花顺专题报表 + 量价情绪代理 + 行情")
-    ic1, ic2 = st.columns([1, 1])
-    snap_code = ic1.text_input("标的代码", "600519", key="intel_snap_code")
-    snap_ths_days = ic2.number_input("同花顺报表回溯天数", 7, 120, 14, key="intel_ths_days")
-    if st.button("拉取情报快照", key="intel_snap_btn"):
-        with st.spinner("正在聚合多源情报..."):
-            snap, err = safe_get_json(
-                f"{backend_url}/api/intel/snapshot",
-                params={"code": snap_code, "notices_limit": 12, "ths_days": int(snap_ths_days)},
-                timeout=120,
+        f1, f2 = st.columns([3, 2])
+        with f1:
+            snap_code = st.text_input("证券代码", "600519", key="intel_snap_code", help="A 股 6 位代码，可含或不含交易所后缀")
+        with f2:
+            snap_ths_days = st.number_input("扩展专题回溯天数", 7, 120, 14, key="intel_ths_days", help="扩展专题披露数据的查询窗口（按环境启用）")
+        if st.button("加载综合监测数据", key="intel_snap_btn", type="primary", use_container_width=True):
+            with st.spinner("正在拉取披露、行情与专题数据..."):
+                snap, err = safe_get_json(
+                    f"{backend_url}/api/intel/snapshot",
+                    params={"code": snap_code, "notices_limit": 12, "ths_days": int(snap_ths_days)},
+                    timeout=120,
+                )
+            if err:
+                st.error(err)
+            else:
+                st.session_state["intel_snap"] = snap
+        snap = st.session_state.get("intel_snap")
+        if snap:
+            ann = snap.get("announcements") or []
+            if snap.get("announcements_ok", True) is False:
+                st.warning("监管披露提要暂不可用（网络或上游响应异常）。行情与其余模块仍可使用。")
+            q = snap.get("quote") or {}
+            vp = snap.get("volume_sentiment_proxy") or {}
+            metric_row(
+                [
+                    {"label": "最新成交价", "value": q.get("price", "—"), "delta": f'{q.get("change_pct", "—")}%'},
+                    {"label": "量价状态指征", "value": vp.get("sentiment", "—")},
+                    {"label": "量价综合评分（0–100）", "value": vp.get("sentiment_score", "—")},
+                ]
             )
-        if err:
-            st.error(err)
-        else:
-            st.session_state["intel_snap"] = snap
-    snap = st.session_state.get("intel_snap")
-    if snap:
-        q = snap.get("quote") or {}
-        metric_row(
-            [
-                {"label": "最新价", "value": q.get("price", "-"), "delta": f'{q.get("change_pct", "-")}%'},
-                {"label": "情绪代理", "value": (snap.get("volume_sentiment_proxy") or {}).get("sentiment", "-")},
-                {"label": "情绪分", "value": (snap.get("volume_sentiment_proxy") or {}).get("sentiment_score", "-")},
-            ]
+            left, right = st.columns([1, 1], gap="medium")
+            with left:
+                st.markdown("###### 监管披露与重大事项")
+                if snap.get("announcements_ok", True) is False:
+                    st.caption("本区块监管披露提要暂不可用。")
+                elif not ann:
+                    st.caption("暂无近期公告条目。")
+                else:
+                    for row in ann:
+                        st.markdown(f"**{row.get('date', '')}** · {row.get('title', '')}")
+            with right:
+                st.markdown("###### 第三方专题数据摘要")
+                digest = (
+                    snap.get("extension_disclosure_digest") or snap.get("ths_disclosure_digest") or ""
+                ).strip() or "（无返回内容）"
+                st.code(digest, language=None)
+
+    with st.container(border=True):
+        st.markdown('<p class="sr-section-title">投研综述生成（自然语言）</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="sr-section-desc">在综合行情与披露事实基础上，由 LangGraph 编排生成<strong>单一标的</strong>的'
+            "文字化投研综述；输出为连贯段落，便于内部研判留痕。</p>",
+            unsafe_allow_html=True,
         )
-        st.markdown("**近期公告标题**")
-        for row in snap.get("announcements") or []:
-            st.write(f"- {row.get('date', '')} {row.get('title', '')}")
-        st.markdown("**同花顺专题报表 / 披露摘要**")
-        st.text_area("ths_digest", snap.get("ths_disclosure_digest", ""), height=220, label_visibility="collapsed")
+        g1, g2 = st.columns([3, 2])
+        with g1:
+            sig_code = st.text_input("证券代码", "600519", key="sig_code")
+        with g2:
+            sig_ths = st.checkbox("纳入扩展专题披露", value=False, key="sig_ths", help="可选；未启用时综述仍基于行情与监管披露提要")
+        if st.button("生成投研综述", key="sig_btn", type="primary", use_container_width=True):
+            with st.spinner("正在生成综述..."):
+                sig, err = safe_post_json(
+                    f"{backend_url}/api/intel/investment-signal",
+                    payload={
+                        "code": sig_code,
+                        "model_name": model_name,
+                        "agent_type": agent_type,
+                        "include_ths_reports": sig_ths,
+                    },
+                    timeout=180,
+                )
+            if err:
+                st.error(err)
+            else:
+                st.session_state["intel_sig"] = sig
+        sig = st.session_state.get("intel_sig")
+        if sig:
+            st.caption("事实来源：" + "、".join(sig.get("sources_used") or []))
+            st.markdown("---")
+            st.markdown(sig.get("signal_narrative", ""))
 
-    st.divider()
-    st.subheader("投资信号（自然语言结论）")
-    st.caption("后端汇总事实后调用 LangGraph Agent，输出单段中文观察，便于演示「信号层」。")
-    sig_code = st.text_input("标的代码", "600519", key="sig_code")
-    sig_ths = st.checkbox("并入同花顺专题报表（需 token）", value=False, key="sig_ths")
-    if st.button("生成投资信号", key="sig_btn", type="primary"):
-        with st.spinner("正在生成自然语言投资观察..."):
-            sig, err = safe_post_json(
-                f"{backend_url}/api/intel/investment-signal",
-                payload={
-                    "code": sig_code,
-                    "model_name": model_name,
-                    "agent_type": agent_type,
-                    "include_ths_reports": sig_ths,
-                },
-                timeout=180,
-            )
-        if err:
-            st.error(err)
-        else:
-            st.session_state["intel_sig"] = sig
-    sig = st.session_state.get("intel_sig")
-    if sig:
-        st.caption("数据来源：" + "、".join(sig.get("sources_used") or []))
-        st.markdown(sig.get("signal_narrative", ""))
-
-    st.divider()
-    st.subheader("同花顺问财式检索（舆情 / 综合条件）")
-    wq = st.text_input("自然语言问题", "贵州茅台 近期资金与舆情相关要点", key="ths_q")
-    if st.button("执行问财检索", key="ths_btn"):
-        with st.spinner("正在调用同花顺 iFinD..."):
-            wencai, err = safe_post_json(f"{backend_url}/api/intel/ths-wencai", payload={"question": wq}, timeout=90)
-        if err:
-            st.error(err)
-        else:
-            st.session_state["ths_wencai"] = wencai
-    wc = st.session_state.get("ths_wencai")
-    if wc:
-        st.text_area("wencai_out", wc.get("text", ""), height=260, label_visibility="collapsed")
-
-    st.divider()
-    st.subheader("双均线策略回测（量化可展示）")
-    st.caption("调用已有 `/api/analysis/ma-backtest`，用于面试中「简单规则 + 超额」演示。")
-    bc1, bc2 = st.columns(2)
-    bt_code = bc1.text_input("标的代码", "600519", key="ma_bt_code")
-    bt_days = bc2.slider("回测天数", 60, 360, 180, key="ma_bt_days")
-    if st.button("运行 MA 回测", key="ma_bt_btn"):
-        with st.spinner("回测中..."):
-            bt, err = safe_get_json(
-                f"{backend_url}/api/analysis/ma-backtest",
-                params={"code": bt_code, "days": bt_days, "short_window": 5, "long_window": 20},
-                timeout=90,
-            )
-        if err:
-            st.error(err)
-        else:
-            st.session_state["ma_bt"] = bt
-    bt = st.session_state.get("ma_bt")
-    if bt:
-        metric_row(
-            [
-                {"label": "策略收益%", "value": bt.get("strategy_return_pct")},
-                {"label": "基准收益%", "value": bt.get("benchmark_return_pct")},
-                {"label": "超额%", "value": bt.get("excess_return_pct")},
-                {"label": "换仓次数", "value": bt.get("trades")},
-            ]
+    with st.container(border=True):
+        st.markdown('<p class="sr-section-title">扩展条件检索</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="sr-section-desc">面向标的或市场的<strong>自然语言条件查询</strong>；与智能体工具链互补，按部署环境返回检索文本。</p>',
+            unsafe_allow_html=True,
         )
+        wq = st.text_input("检索语句", "贵州茅台 近期资金与舆情相关要点", key="ths_q")
+        if st.button("执行条件检索", key="ths_btn", use_container_width=True):
+            with st.spinner("检索中…"):
+                wencai, err = safe_post_json(f"{backend_url}/api/intel/ths-wencai", payload={"question": wq}, timeout=90)
+            if err:
+                st.error(err)
+            else:
+                st.session_state["ths_wencai"] = wencai
+        wc = st.session_state.get("ths_wencai")
+        if wc:
+            st.markdown("###### 检索结果")
+            st.code((wc.get("text") or "").strip() or "（空）", language=None)
+
+    with st.container(border=True):
+        st.markdown('<p class="sr-section-title">双移动平均线交叉策略回测</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="sr-section-desc">经典<strong>金叉 / 死叉</strong>规则：短期均线与长期均线交叉产生持仓信号，'
+            "对比买入并持有的累计收益与超额收益。</p>",
+            unsafe_allow_html=True,
+        )
+        b1, b2 = st.columns([2, 3])
+        with b1:
+            bt_code = st.text_input("证券代码", "600519", key="ma_bt_code")
+        with b2:
+            bt_days = st.slider("回测区间（交易日）", 60, 360, 180, key="ma_bt_days")
+        if st.button("运行回测", key="ma_bt_btn", use_container_width=True):
+            with st.spinner("回测计算中..."):
+                bt, err = safe_get_json(
+                    f"{backend_url}/api/analysis/ma-backtest",
+                    params={"code": bt_code, "days": bt_days, "short_window": 5, "long_window": 20},
+                    timeout=90,
+                )
+            if err:
+                st.error(err)
+            else:
+                st.session_state["ma_bt"] = bt
+        bt = st.session_state.get("ma_bt")
+        if bt:
+            metric_row(
+                [
+                    {"label": "策略累计收益（%）", "value": bt.get("strategy_return_pct")},
+                    {"label": "基准累计收益（%）", "value": bt.get("benchmark_return_pct")},
+                    {"label": "超额收益（%）", "value": bt.get("excess_return_pct")},
+                    {"label": "信号换手次数", "value": bt.get("trades")},
+                ]
+            )
 
 with market_tab:
     t1, t2, t3 = st.tabs(["行情快照", "历史走势", "技术指标"])
