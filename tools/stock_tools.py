@@ -1,11 +1,16 @@
 from langchain_core.tools import Tool
 from data.tushare_client import TushareClient
 from data.calculator import StockCalculator
+from data.market_intel_client import MarketIntelClient
+from data.ths_ifind_client import ThsIfindClient
+
 
 class StockTools:
     def __init__(self):
         self.ts = TushareClient()
         self.calc = StockCalculator()
+        self.intel = MarketIntelClient()
+        self.ths = ThsIfindClient()
 
     async def get_stock_price(self, code: str):
         """获取股票实时价格"""
@@ -17,6 +22,40 @@ class StockTools:
         closes = self.ts.get_5d_klines(code)
         ma5 = self.calc.ma5(closes)
         return f"股票{code} 5日均线 MA5 = {ma5:.2f}"
+
+    async def get_recent_announcements(self, code: str):
+        """获取 A 股公司近期公告标题列表（非结构化信息，供投资决策引用）"""
+        try:
+            rows = self.intel.fetch_recent_notices(code.strip(), page_size=10)
+            if not rows:
+                return f"股票{code} 近期未拉取到公告列表（可能无数据或接口变更）。"
+            lines = [f"- {r.get('date', '')} {r.get('title', '')}" for r in rows]
+            return f"股票{code} 近期公告摘要（共{len(lines)}条）：\n" + "\n".join(lines)
+        except Exception as exc:
+            return f"拉取公告失败: {str(exc)}"
+
+    async def get_ths_recent_reports(self, query: str):
+        """同花顺 iFinD 专题报表：近期披露类标题（自然语言列表）。query 为「代码」或「代码,天数」如 600519,30。"""
+        try:
+            parts = (query or "").replace("，", ",").split(",", 1)
+            code = parts[0].strip()
+            d = 14
+            if len(parts) > 1:
+                try:
+                    d = int(parts[1].strip())
+                except ValueError:
+                    d = 14
+            d = max(1, min(d, 365))
+            return self.ths.report_query_titles(code, days=d)
+        except Exception as exc:
+            return f"同花顺专题报表拉取失败: {str(exc)}"
+
+    async def query_ths_intel(self, question: str):
+        """同花顺 iFinD 问财式智能检索：用于新闻要点、市场舆情、综合条件等自然语言提问。"""
+        try:
+            return self.ths.smart_stock_picking_text(question.strip())
+        except Exception as exc:
+            return f"同花顺智能检索失败: {str(exc)}"
 
     @classmethod
     def get_all_tools(cls):
@@ -33,5 +72,23 @@ class StockTools:
                 func=lambda c: None,
                 coroutine=t.calculate_ma5,
                 description="输入股票代码，自动获取K线并计算5日均线 MA5"
+            ),
+            Tool(
+                name="get_recent_announcements",
+                func=lambda c: None,
+                coroutine=t.get_recent_announcements,
+                description="输入股票代码如600519，获取近期公司公告标题列表，用于结合基本面与舆情做决策",
+            ),
+            Tool(
+                name="get_ths_recent_reports",
+                func=lambda c: None,
+                coroutine=t.get_ths_recent_reports,
+                description="输入股票代码，或「代码,天数」如600519,30（默认14天）；从同花顺 iFinD 拉取近期专题报表/披露类标题文本，用于新闻与合规信息侧写",
+            ),
+            Tool(
+                name="query_ths_intel",
+                func=lambda *a, **k: None,
+                coroutine=t.query_ths_intel,
+                description="输入一句自然语言问题或关键词（可含代码、板块、舆情方向），通过同花顺 iFinD 智能检索返回文本片段，用于新闻流与市场情绪侧写",
             ),
         ]

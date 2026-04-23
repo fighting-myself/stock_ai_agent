@@ -7,6 +7,8 @@ import httpx
 from config.settings import settings
 from core.workflow import StockAgentWorkflow
 from data.calculator import StockCalculator
+from data.market_intel_client import MarketIntelClient
+from data.ths_ifind_client import ThsIfindClient
 from data.tushare_client import TushareClient
 from utils.logger import logger
 from utils.response import ApiResponse, error_response, success_response
@@ -18,6 +20,8 @@ app = FastAPI(
 )
 ts_client = TushareClient()
 calculator = StockCalculator()
+intel_client = MarketIntelClient()
+ths_http = ThsIfindClient()
 
 
 class Position(BaseModel):
@@ -45,6 +49,33 @@ class InvestmentPlanRequest(BaseModel):
     code: str
     days: int = 120
     style: str = "balanced"  # conservative / balanced / aggressive
+
+
+class InvestmentSignalRequest(BaseModel):
+    """生成自然语言投资观察（不落库；模型输出为段落文本而非结构化 JSON）。"""
+
+    code: str
+    model_name: str | None = None
+    agent_type: str = "react"
+    include_ths_reports: bool = False
+
+
+class ThsWencaiRequest(BaseModel):
+    question: str
+
+
+def _mask_url(url: str) -> str:
+    if not (url or "").strip():
+        return ""
+    try:
+        from urllib.parse import urlparse
+
+        u = urlparse(url.strip())
+        if u.scheme and u.netloc:
+            return f"{u.scheme}://{u.netloc}/…"
+    except Exception:
+        pass
+    return (url or "")[:40] + ("…" if len(url or "") > 40 else "")
 
 
 def _clamp_score(score: float) -> int:
@@ -75,6 +106,17 @@ def _calc_return_pct(closes: List[float]) -> float:
     return round((closes[-1] - closes[0]) / closes[0] * 100, 2)
 
 
+def _sentiment_payload(code: str, days: int = 60):
+    df = ts_client.get_recent_daily(code=code, days=days)
+    closes = [float(v) for v in df["close"].tolist()]
+    vols = [float(v) for v in df["vol"].tolist()]
+    ret20 = _calc_return_pct(closes[-20:] if len(closes) >= 20 else closes)
+    vol_ratio = (sum(vols[-5:]) / 5) / ((sum(vols[-20:]) / 20) if len(vols) >= 20 else max(sum(vols) / len(vols), 1e-6))
+    score = _clamp_score(50 + ret20 * 1.2 + (vol_ratio - 1) * 20)
+    label = "乐观" if score >= 65 else ("中性" if score >= 40 else "谨慎")
+    return {"code": code, "sentiment_score": score, "sentiment": label, "ret20_pct": ret20, "volume_ratio_5_20": round(vol_ratio, 2)}
+
+
 def _style_base_exposure(style: str) -> float:
     if style == "conservative":
         return 0.35
@@ -100,7 +142,13 @@ async def analyze_stock(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "model": settings.DEFAULT_MODEL}
+    return {
+        "status": "ok",
+        "default_model": settings.DEFAULT_MODEL,
+        "tushare_configured": bool(settings.TUSHARE_TOKEN.strip()),
+        "vllm_ready": settings.vllm_ready,
+        "ths_ifind_ready": settings.ths_ifind_ready,
+    }
 
 
 @app.get("/api/market/quote")
@@ -397,14 +445,109 @@ async def portfolio_rebalance(req: RebalanceRequest):
 
 @app.get("/api/analysis/sentiment-proxy")
 async def sentiment_proxy(code: str, days: int = 60):
-    df = ts_client.get_recent_daily(code=code, days=days)
-    closes = [float(v) for v in df["close"].tolist()]
-    vols = [float(v) for v in df["vol"].tolist()]
-    ret20 = _calc_return_pct(closes[-20:] if len(closes) >= 20 else closes)
-    vol_ratio = (sum(vols[-5:]) / 5) / ((sum(vols[-20:]) / 20) if len(vols) >= 20 else max(sum(vols) / len(vols), 1e-6))
-    score = _clamp_score(50 + ret20 * 1.2 + (vol_ratio - 1) * 20)
-    label = "乐观" if score >= 65 else ("中性" if score >= 40 else "谨慎")
-    return {"code": code, "sentiment_score": score, "sentiment": label, "ret20_pct": ret20, "volume_ratio_5_20": round(vol_ratio, 2)}
+    return _sentiment_payload(code, days)
+
+
+@app.get("/api/system/runtime")
+async def system_runtime():
+    """供前端「投研看板」展示：架构说明、数据源与推理网关就绪状态（不含密钥）。"""
+    return {
+        "service": "stock-ai-agent-backend",
+        "stack": "FastAPI + LangGraph（多 Agent 范式）+ Streamlit 控制台",
+        "deployment_note": "单仓代码库；前后端可分别容器化部署（Dockerfile 分目录），便于云环境弹性伸缩。",
+        "tushare_configured": bool(settings.TUSHARE_TOKEN.strip()),
+        "vllm_ready": settings.vllm_ready,
+        "vllm_base_url_masked": _mask_url(settings.VLLM_BASE_URL),
+        "vllm_model": settings.VLLM_MODEL or None,
+        "ths_ifind_ready": settings.ths_ifind_ready,
+        "default_model": settings.DEFAULT_MODEL,
+        "default_agent_type": settings.DEFAULT_AGENT_TYPE,
+        "agent_paradigms": ["react", "plan_execute", "reflection", "rewoo"],
+        "structured_intel_sources": [
+            {"id": "tushare", "label": "历史行情 / 快照", "role": "量化与技术面事实"},
+            {"id": "eastmoney_ann", "label": "东方财富公告", "role": "非结构化披露"},
+            {"id": "ths_ifind", "label": "同花顺 iFinD", "role": "专题报表与问财式检索（需 refresh_token）"},
+        ],
+    }
+
+
+@app.get("/api/intel/snapshot")
+async def intel_snapshot(code: str, notices_limit: int = 10, ths_days: int = 14):
+    """非结构化情报快照：公告 + 可选同花顺专题报表 + 行情，供界面「情报面板」。"""
+    code = code.strip()
+    notices = intel_client.fetch_recent_notices(code, page_size=min(max(notices_limit, 1), 30))
+    quote = ts_client.get_quote_snapshot(code)
+    ths_digest = ""
+    if settings.ths_ifind_ready:
+        try:
+            ths_digest = ths_http.report_query_titles(code, days=min(max(ths_days, 1), 365))
+        except Exception as exc:
+            ths_digest = f"同花顺拉取失败: {exc}"
+    else:
+        ths_digest = "未配置 THS_IFIND_REFRESH_TOKEN，已跳过同花顺专题报表。"
+    sent = _sentiment_payload(code, 60)
+    return {
+        "code": code,
+        "quote": quote,
+        "announcements": notices,
+        "ths_disclosure_digest": ths_digest,
+        "volume_sentiment_proxy": sent,
+    }
+
+
+@app.post("/api/intel/ths-wencai")
+async def intel_ths_wencai(req: ThsWencaiRequest):
+    """同花顺问财式检索（需 token）；返回自然语言可读的 JSON 文本片段。"""
+    if not settings.ths_ifind_ready:
+        return {"ok": False, "text": "未配置 THS_IFIND_REFRESH_TOKEN，无法调用同花顺问财接口。"}
+    try:
+        text = ths_http.smart_stock_picking_text(req.question.strip())
+        return {"ok": True, "text": text}
+    except Exception as exc:
+        logger.error(f"ths wencai: {exc}")
+        return {"ok": False, "text": f"调用失败: {exc}"}
+
+
+@app.post("/api/intel/investment-signal")
+async def intel_investment_signal(req: InvestmentSignalRequest):
+    """综合行情、公告、量价情绪代理及可选同花顺报表，经 LLM 输出一段自然语言投资观察（非结构化）。"""
+    code = req.code.strip()
+    model_name = (req.model_name or settings.DEFAULT_MODEL).strip()
+    quote = ts_client.get_quote_snapshot(code)
+    notices = intel_client.fetch_recent_notices(code, page_size=10)
+    ann_lines = "\n".join(f"- {n.get('date', '')} {n.get('title', '')}" for n in notices) or "- （无近期公告标题）"
+    sent = _sentiment_payload(code, 60)
+    ths_block = ""
+    sources = ["Tushare 行情", "东方财富公告标题", "量价情绪代理指标"]
+    if req.include_ths_reports and settings.ths_ifind_ready:
+        try:
+            ths_block = ths_http.report_query_titles(code, days=14)
+            sources.append("同花顺 iFinD 专题报表")
+        except Exception as exc:
+            ths_block = f"（同花顺专题报表不可用：{exc}）"
+    elif req.include_ths_reports:
+        ths_block = "（未配置同花顺 token，已跳过）"
+    facts = (
+        f"标的代码: {code}\n"
+        f"行情快照: {quote}\n"
+        f"近端公告标题:\n{ann_lines}\n"
+        f"量价情绪代理: {sent}\n"
+        f"同花顺专题报表摘要:\n{ths_block or '（未启用或未配置）'}\n"
+    )
+    prompt = (
+        "你是合规的投研写作助手。请仅根据下列「事实材料」撰写一段中文投资观察结论（自然语言段落），"
+        "须包含：事实归纳、主要不确定性或风险、可跟踪的后续观察点。语气克制，不得承诺收益，不得输出 JSON 或键值表。\n\n"
+        f"{facts}"
+    )
+    workflow = StockAgentWorkflow(agent_type=req.agent_type, model_name=model_name)
+    narrative = await workflow.run(prompt)
+    return {
+        "code": code,
+        "model": model_name,
+        "agent_type": req.agent_type,
+        "sources_used": sources,
+        "signal_narrative": narrative,
+    }
 
 
 @app.get("/api/analysis/ma-backtest")

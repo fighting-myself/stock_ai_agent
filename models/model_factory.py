@@ -43,6 +43,20 @@ class ModelFactory:
                 temperature=0.1
             )
 
+        # vLLM（OpenAI 兼容，base_url 指向 vLLM 网关）
+        elif model_name in ("vllm-local", "vllm"):
+            if not settings.VLLM_BASE_URL:
+                raise ValueError("使用 vLLM 请在环境变量中配置 VLLM_BASE_URL（例如 http://127.0.0.1:8000/v1）")
+            if not settings.VLLM_MODEL:
+                raise ValueError("使用 vLLM 请在环境变量中配置 VLLM_MODEL（与推理服务一致的模型 id）")
+            return ChatOpenAI(
+                model=settings.VLLM_MODEL,
+                api_key=settings.VLLM_API_KEY or "EMPTY",
+                base_url=settings.VLLM_BASE_URL,
+                temperature=0.1,
+                max_tokens=4096,
+            )
+
         # OpenAI GPT
         elif "gpt" in model_name:
             return ChatOpenAI(

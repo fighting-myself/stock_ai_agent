@@ -31,7 +31,7 @@ def metric_row(items):
         c.metric(item["label"], item["value"], item.get("delta"))
 
 
-st.set_page_config(page_title="企业投研分析平台", layout="wide")
+st.set_page_config(page_title="股票 AI 投研决策系统", layout="wide")
 st.markdown(
     """
     <style>
@@ -59,7 +59,8 @@ with st.sidebar:
     agent_type = st.selectbox("Agent范式", ["react", "plan_execute", "reflection", "rewoo"])
     model_name = st.selectbox(
         "模型",
-        ["qwen3-vl-plus", "doubao", "deepseek-chat", "minimax-chat", "gpt-3.5-turbo"],
+        ["qwen3-vl-plus", "doubao", "deepseek-chat", "minimax-chat", "gpt-3.5-turbo", "vllm-local"],
+        help="vllm-local 需在服务端配置 VLLM_BASE_URL 与 VLLM_MODEL（OpenAI 兼容网关）",
     )
     if st.button("健康检查", use_container_width=True):
         with st.spinner("正在检查服务状态..."):
@@ -67,10 +68,15 @@ with st.sidebar:
         if err:
             st.error(err)
         else:
-            st.success(f"服务正常: {health}")
+            bits = [f"status={health.get('status')}", f"tushare={'✓' if health.get('tushare_configured') else '✗'}"]
+            if "vllm_ready" in health:
+                bits.append(f"vllm={'✓' if health.get('vllm_ready') else '✗'}")
+            if "ths_ifind_ready" in health:
+                bits.append(f"ths={'✓' if health.get('ths_ifind_ready') else '✗'}")
+            st.success("服务正常 · " + " ".join(bits))
 
-main_tab, market_tab, risk_tab, strategy_tab = st.tabs(
-    ["智能分析", "市场与技术", "风险与组合", "高级策略"]
+main_tab, capability_tab, market_tab, risk_tab, strategy_tab = st.tabs(
+    ["智能分析", "投研能力看板", "市场与技术", "风险与组合", "高级策略"]
 )
 
 with main_tab:
@@ -125,6 +131,140 @@ with main_tab:
                 ),
                 use_container_width=True,
             )
+
+with capability_tab:
+    st.subheader("与简历对齐的项目叙事（演示给面试官）")
+    st.caption("业务效果类表述以简历为准；本界面用于展示技术链路，不构成投资建议。")
+    with st.expander("项目描述 / 职责 / 业绩（简历原文要点）", expanded=True):
+        st.markdown(
+            """
+**项目描述**：布局 AI 金融投资领域；传统量化模型难以处理海量非结构化市场信息，导致决策滞后、风险识别不足；构建可解析新闻/财报/社交舆情并生成投资信号的智能系统。
+
+**项目职责**：基于 LangGraph 实现决策编排，整合历史行情、公司公告与实时新闻流类数据；针对推理延迟采用 **vLLM** 做 OpenAI 兼容网关加速文本生成与信息抽取；系统 **容器化** 部署，便于在云环境弹性伸缩（单仓代码，前后端可独立扩缩）。
+
+**项目业绩（简历口径）**：非结构化信息处理效率显著提升；策略回测超额收益（以实际回测为准）；vLLM 侧降低端到端响应延迟，为业务提供稳定推理底座。
+            """
+        )
+
+    st.subheader("系统运行态（后端探测）")
+    if st.button("刷新运行态", key="runtime_btn"):
+        rt, err = safe_get_json(f"{backend_url}/api/system/runtime", timeout=15)
+        if err:
+            st.error(err)
+        else:
+            st.session_state["runtime"] = rt
+    rt = st.session_state.get("runtime")
+    if rt:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Tushare", "已配置" if rt.get("tushare_configured") else "未配置")
+        c2.metric("vLLM 就绪", "是" if rt.get("vllm_ready") else "否")
+        c3.metric("同花顺 iFinD", "已配置" if rt.get("ths_ifind_ready") else "未配置")
+        c4.metric("默认模型", rt.get("default_model", "-"))
+        st.write(rt.get("stack", ""))
+        st.info(rt.get("deployment_note", ""))
+        for row in rt.get("structured_intel_sources") or []:
+            st.caption(f"· **{row.get('label')}**：{row.get('role')}")
+
+    st.divider()
+    st.subheader("非结构化情报快照")
+    st.caption("东方财富公告 + 可选同花顺专题报表 + 量价情绪代理 + 行情")
+    ic1, ic2 = st.columns([1, 1])
+    snap_code = ic1.text_input("标的代码", "600519", key="intel_snap_code")
+    snap_ths_days = ic2.number_input("同花顺报表回溯天数", 7, 120, 14, key="intel_ths_days")
+    if st.button("拉取情报快照", key="intel_snap_btn"):
+        with st.spinner("正在聚合多源情报..."):
+            snap, err = safe_get_json(
+                f"{backend_url}/api/intel/snapshot",
+                params={"code": snap_code, "notices_limit": 12, "ths_days": int(snap_ths_days)},
+                timeout=120,
+            )
+        if err:
+            st.error(err)
+        else:
+            st.session_state["intel_snap"] = snap
+    snap = st.session_state.get("intel_snap")
+    if snap:
+        q = snap.get("quote") or {}
+        metric_row(
+            [
+                {"label": "最新价", "value": q.get("price", "-"), "delta": f'{q.get("change_pct", "-")}%'},
+                {"label": "情绪代理", "value": (snap.get("volume_sentiment_proxy") or {}).get("sentiment", "-")},
+                {"label": "情绪分", "value": (snap.get("volume_sentiment_proxy") or {}).get("sentiment_score", "-")},
+            ]
+        )
+        st.markdown("**近期公告标题**")
+        for row in snap.get("announcements") or []:
+            st.write(f"- {row.get('date', '')} {row.get('title', '')}")
+        st.markdown("**同花顺专题报表 / 披露摘要**")
+        st.text_area("ths_digest", snap.get("ths_disclosure_digest", ""), height=220, label_visibility="collapsed")
+
+    st.divider()
+    st.subheader("投资信号（自然语言结论）")
+    st.caption("后端汇总事实后调用 LangGraph Agent，输出单段中文观察，便于演示「信号层」。")
+    sig_code = st.text_input("标的代码", "600519", key="sig_code")
+    sig_ths = st.checkbox("并入同花顺专题报表（需 token）", value=False, key="sig_ths")
+    if st.button("生成投资信号", key="sig_btn", type="primary"):
+        with st.spinner("正在生成自然语言投资观察..."):
+            sig, err = safe_post_json(
+                f"{backend_url}/api/intel/investment-signal",
+                payload={
+                    "code": sig_code,
+                    "model_name": model_name,
+                    "agent_type": agent_type,
+                    "include_ths_reports": sig_ths,
+                },
+                timeout=180,
+            )
+        if err:
+            st.error(err)
+        else:
+            st.session_state["intel_sig"] = sig
+    sig = st.session_state.get("intel_sig")
+    if sig:
+        st.caption("数据来源：" + "、".join(sig.get("sources_used") or []))
+        st.markdown(sig.get("signal_narrative", ""))
+
+    st.divider()
+    st.subheader("同花顺问财式检索（舆情 / 综合条件）")
+    wq = st.text_input("自然语言问题", "贵州茅台 近期资金与舆情相关要点", key="ths_q")
+    if st.button("执行问财检索", key="ths_btn"):
+        with st.spinner("正在调用同花顺 iFinD..."):
+            wencai, err = safe_post_json(f"{backend_url}/api/intel/ths-wencai", payload={"question": wq}, timeout=90)
+        if err:
+            st.error(err)
+        else:
+            st.session_state["ths_wencai"] = wencai
+    wc = st.session_state.get("ths_wencai")
+    if wc:
+        st.text_area("wencai_out", wc.get("text", ""), height=260, label_visibility="collapsed")
+
+    st.divider()
+    st.subheader("双均线策略回测（量化可展示）")
+    st.caption("调用已有 `/api/analysis/ma-backtest`，用于面试中「简单规则 + 超额」演示。")
+    bc1, bc2 = st.columns(2)
+    bt_code = bc1.text_input("标的代码", "600519", key="ma_bt_code")
+    bt_days = bc2.slider("回测天数", 60, 360, 180, key="ma_bt_days")
+    if st.button("运行 MA 回测", key="ma_bt_btn"):
+        with st.spinner("回测中..."):
+            bt, err = safe_get_json(
+                f"{backend_url}/api/analysis/ma-backtest",
+                params={"code": bt_code, "days": bt_days, "short_window": 5, "long_window": 20},
+                timeout=90,
+            )
+        if err:
+            st.error(err)
+        else:
+            st.session_state["ma_bt"] = bt
+    bt = st.session_state.get("ma_bt")
+    if bt:
+        metric_row(
+            [
+                {"label": "策略收益%", "value": bt.get("strategy_return_pct")},
+                {"label": "基准收益%", "value": bt.get("benchmark_return_pct")},
+                {"label": "超额%", "value": bt.get("excess_return_pct")},
+                {"label": "换仓次数", "value": bt.get("trades")},
+            ]
+        )
 
 with market_tab:
     t1, t2, t3 = st.tabs(["行情快照", "历史走势", "技术指标"])

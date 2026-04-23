@@ -3,6 +3,7 @@ fastapi==0.115.8
 uvicorn==0.25.0
 httpx==0.27.2
 pydantic==2.10.4
+pydantic-settings==2.7.1
 python-multipart==0.0.9
 
 # 前端
